@@ -1,155 +1,166 @@
 import { useParams, Link } from 'react-router-dom'
 import { GitBranch, RefreshCw, Bot, Shield, FileText, Search, type LucideIcon } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
-import { PageHeader, StatusBadge, ErrorState, LoadingSkeleton, EmptyState } from '@/components'
-import { getRepository } from '@/api/repositories'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { PageHeader, StatusBadge, ErrorState, LoadingSkeleton } from '@/components'
+import { getRepository, listRepositoryJobs, startIndexJob } from '@/api/repositories'
+import type { IndexJob } from '@/types'
 import { clsx } from 'clsx'
 
-export function RepositoryDetailPage() {
+const ACTIVE_STATUSES = new Set(['queued', 'fetching', 'classifying', 'parsing', 'summarizing', 'embedding', 'persisting'])
+
+export default function RepositoryDetailPage() {
   const { id } = useParams<{ id: string }>()
+  const queryClient = useQueryClient()
+
+  const isActive = (jobs: IndexJob[]) => jobs.some((j) => ACTIVE_STATUSES.has(j.status))
 
   const { data: repo, isLoading, error } = useQuery({
     queryKey: ['repository', id],
     queryFn: () => getRepository(id!),
-    enabled: Boolean(id),
+    enabled: !!id,
+    refetchInterval: (query) => ACTIVE_STATUSES.has(query.state.data?.status ?? '') ? 3000 : false,
   })
 
-  if (isLoading) return <LoadingSkeleton rows={4} className="p-6" />
+  const { data: jobs } = useQuery({
+    queryKey: ['repository-jobs', id],
+    queryFn: () => listRepositoryJobs(id!),
+    enabled: !!id,
+    refetchInterval: (query) => isActive(query.state.data ?? []) ? 3000 : false,
+  })
 
-  if (error || !repo) {
-    return (
-      <ErrorState
-        message="Failed to load repository details."
-        onRetry={() => window.location.reload()}
-      />
-    )
-  }
+  const indexMutation = useMutation({
+    mutationFn: () => startIndexJob(id!, 'full'),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repository', id] })
+      queryClient.invalidateQueries({ queryKey: ['repository-jobs', id] })
+    },
+  })
+
+  if (isLoading) return <div className="p-6"><LoadingSkeleton rows={6} /></div>
+  if (error || !repo) return (
+    <div className="p-6">
+      <ErrorState title="Repository not found" message="This repository could not be loaded." />
+    </div>
+  )
+
+  const latestJob = jobs?.[0]
+  const isIndexing = ACTIVE_STATUSES.has(repo.status)
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="p-6 space-y-6">
       <PageHeader
         title={`${repo.owner}/${repo.name}`}
-        subtitle={repo.description ?? `${repo.selectedBranch} · ${repo.latestVersion?.commitSha?.slice(0, 7) ?? 'not indexed'}`}
+        subtitle={repo.description || undefined}
         actions={
           <div className="flex items-center gap-2">
-            <StatusBadge status={repo.status as never} />
+            <StatusBadge status={repo.status} />
             <button
-              className={clsx(
-                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium',
-                'border border-border text-text-secondary hover:bg-surface transition-colors',
-              )}
+              onClick={() => indexMutation.mutate()}
+              disabled={isIndexing || indexMutation.isPending}
+              className="flex items-center gap-2 px-3 py-2 border border-border rounded-md text-sm text-text-secondary hover:border-accent hover:text-accent transition-colors disabled:opacity-50"
             >
-              <RefreshCw size={13} />
-              Re-index
+              <RefreshCw size={14} className={clsx(isIndexing && 'animate-spin')} />
+              {repo.latestVersion ? 'Refresh Index' : 'Start Indexing'}
             </button>
           </div>
         }
       />
 
-      <div className="flex-1 p-6 space-y-6 overflow-y-auto">
-        {/* Index status panel */}
-        <div className="border border-border rounded-lg p-4">
-          <h2 className="text-sm font-semibold text-text-primary mb-3">Index Status</h2>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <InfoItem label="Branch" value={repo.selectedBranch} mono />
-            <InfoItem
-              label="Commit"
-              value={repo.latestVersion?.commitSha?.slice(0, 7) ?? '—'}
-              mono
-            />
-            <InfoItem
-              label="Last indexed"
-              value={
-                repo.latestVersion
-                  ? new Date(repo.latestVersion.indexedAt).toLocaleString()
-                  : 'Never'
-              }
-            />
-            <InfoItem label="Visibility" value={repo.visibility} />
-          </div>
-        </div>
+      {/* Index info */}
+      <div className="grid grid-cols-3 gap-4">
+        <InfoCard label="Branch" value={
+          <span className="flex items-center gap-1.5 text-sm text-text-primary">
+            <GitBranch size={14} className="text-text-muted" />
+            {repo.selectedBranch}
+          </span>
+        } />
+        <InfoCard label="Last Indexed" value={
+          repo.latestVersion
+            ? new Date(repo.latestVersion.indexedAt).toLocaleString()
+            : 'Not yet indexed'
+        } />
+        <InfoCard label="Commit" value={
+          repo.latestVersion ? (
+            <span className="font-mono text-xs">{repo.latestVersion.commitSha.slice(0, 8)}</span>
+          ) : '—'
+        } />
+      </div>
 
-        {/* Quick links to analysis workflows */}
-        {repo.status === 'indexed' || repo.status === 'stale' ? (
-          <div>
-            <h2 className="text-sm font-semibold text-text-primary mb-3">Analysis Workflows</h2>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <WorkflowCard
-                to={`/workspace?repo=${repo.id}`}
-                icon={Bot}
-                label="Ask a question"
-                description="Repository Q&A"
-              />
-              <WorkflowCard
-                to={`/code-explorer?repo=${repo.id}`}
-                icon={Search}
-                label="Explore code"
-                description="Browse and search"
-              />
-              <WorkflowCard
-                to={`/investigation?repo=${repo.id}`}
-                icon={GitBranch}
-                label="Investigate issue"
-                description="Root-cause analysis"
-              />
-              <WorkflowCard
-                to={`/security?repo=${repo.id}`}
-                icon={Shield}
-                label="Security scan"
-                description="Dependency &amp; patterns"
-              />
-              <WorkflowCard
-                to={`/documentation?repo=${repo.id}`}
-                icon={FileText}
-                label="Generate docs"
-                description="Architecture &amp; modules"
+      {/* Active job progress */}
+      {latestJob && ACTIVE_STATUSES.has(latestJob.status) && (
+        <div className="p-4 border border-accent/30 bg-accent-subtle rounded-lg space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-accent">
+              Indexing in progress — {latestJob.stage || latestJob.status}
+            </span>
+            <span className="text-xs text-text-secondary">
+              {latestJob.filesProcessed}/{latestJob.filesTotal ?? '?'} files
+            </span>
+          </div>
+          {latestJob.filesTotal && latestJob.filesTotal > 0 && (
+            <div className="h-1.5 bg-accent/20 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-accent rounded-full transition-all"
+                style={{ width: `${Math.min(100, (latestJob.filesProcessed / latestJob.filesTotal) * 100)}%` }}
               />
             </div>
-          </div>
-        ) : (
-          <EmptyState
-            icon={GitBranch}
-            title={
-              repo.status === 'pending' || repo.status === 'indexing'
-                ? 'Indexing in progress'
-                : 'Repository not indexed'
-            }
-            description={
-              repo.status === 'failed'
-                ? 'Indexing failed. Check the job details and retry.'
-                : 'Start indexing to enable Q&A, investigation, security analysis and documentation workflows.'
-            }
-            action={
-              <button
-                className={clsx(
-                  'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium',
-                  'bg-accent text-white hover:bg-accent-hover transition-colors',
-                )}
-              >
-                <RefreshCw size={13} />
-                Start Indexing
-              </button>
-            }
-          />
-        )}
+          )}
+        </div>
+      )}
 
-        {/* TODO: recent tasks for this repository */}
-        {/* TODO: index job history */}
+      {/* Quick navigation */}
+      <div className="space-y-2">
+        <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Analysis</h2>
+        <div className="grid grid-cols-2 gap-3">
+          <QuickLink to={`/workspace?repo=${id}`} icon={Bot} label="AI Workspace" description="Ask questions about this repository" />
+          <QuickLink to={`/code-explorer?repo=${id}`} icon={Search} label="Code Explorer" description="Search and browse code" />
+          <QuickLink to={`/security?repo=${id}`} icon={Shield} label="Security" description="Scan for vulnerabilities" />
+          <QuickLink to={`/documentation?repo=${id}`} icon={FileText} label="Documentation" description="Generate technical docs" />
+        </div>
       </div>
+
+      {/* Recent jobs */}
+      {jobs && jobs.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Recent Jobs</h2>
+          <div className="border border-border rounded-lg divide-y divide-border">
+            {jobs.slice(0, 5).map((job) => (
+              <div key={job.id} className="flex items-center justify-between p-3">
+                <div className="flex items-center gap-3">
+                  <StatusBadge status={job.status} />
+                  <span className="text-xs text-text-secondary capitalize">{job.mode}</span>
+                  {job.stage && (
+                    <span className="text-xs text-text-muted">— {job.stage}</span>
+                  )}
+                </div>
+                <div className="flex items-center gap-4 text-xs text-text-muted">
+                  {job.filesTotal && (
+                    <span>{job.filesProcessed}/{job.filesTotal} files</span>
+                  )}
+                  {job.filesFailed > 0 && (
+                    <span className="text-warning">{job.filesFailed} failed</span>
+                  )}
+                  <span>{new Date(job.createdAt).toLocaleString()}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
-function InfoItem({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function InfoCard({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div>
-      <p className="text-xs text-text-muted mb-0.5">{label}</p>
-      <p className={clsx('text-sm text-text-primary', mono && 'font-mono')}>{value}</p>
+    <div className="p-3 border border-border rounded-lg bg-surface">
+      <p className="text-xs text-text-muted mb-1">{label}</p>
+      <div className="text-sm text-text-primary">{value}</div>
     </div>
   )
 }
 
-function WorkflowCard({
+function QuickLink({
   to,
   icon: Icon,
   label,
@@ -163,13 +174,11 @@ function WorkflowCard({
   return (
     <Link
       to={to}
-      className="flex flex-col gap-2 p-3 border border-border rounded-lg hover:bg-surface hover:border-accent/30 transition-colors"
+      className="flex flex-col gap-1.5 p-3 border border-border rounded-lg hover:bg-surface hover:border-accent/30 transition-colors"
     >
       <Icon size={16} className="text-text-secondary" />
-      <div>
-        <p className="text-sm font-medium text-text-primary">{label}</p>
-        <p className="text-xs text-text-muted">{description}</p>
-      </div>
+      <span className="text-sm font-medium text-text-primary">{label}</span>
+      <span className="text-xs text-text-muted">{description}</span>
     </Link>
   )
 }

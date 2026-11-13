@@ -2,57 +2,111 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  /* Canvas / surface colors */
-  --color-canvas: #ffffff;
-  --color-surface: #f8f9fa;
-  --color-surface-elevated: #ffffff;
+/* ═══════════════════════════════════════════════════════════════
+   DESIGN TOKENS — Light mode (default)
+   Applied via [data-theme="light"] or :root default
+   ═══════════════════════════════════════════════════════════════ */
+:root,
+[data-theme="light"] {
+  /* Surfaces */
+  --color-canvas:           #FAFAFA;
+  --color-surface:          #FFFFFF;
+  --color-surface-elevated: #FFFFFF;
+  --color-hover:            #F5F5F5;
 
-  /* Text colors */
-  --color-text-primary: #1a1d23;
-  --color-text-secondary: #6b7280;
-  --color-text-muted: #9ca3af;
+  /* Text */
+  --color-text-primary:   #171717;
+  --color-text-secondary: #575859;
+  --color-text-muted:     #9A9A9B;
 
-  /* Border colors */
-  --color-border: #e5e7eb;
-  --color-border-subtle: #f3f4f6;
+  /* Borders */
+  --color-border:        #E0E0E0;
+  --color-border-subtle: #EAEAEA;
 
-  /* Accent colors */
-  --color-accent: #2563eb;
-  --color-accent-hover: #1d4ed8;
-  --color-accent-subtle: #eff6ff;
+  /* Navigation active state */
+  --color-nav-active-bg:   #EAEAEA;
+  --color-nav-active-text: #171717;
 
-  /* Status: success */
-  --color-success: #16a34a;
+  /* Accent (neutral — no blue) */
+  --color-accent:        #171717;
+  --color-accent-hover:  #2D2D2D;
+  --color-accent-subtle: #F5F5F5;
+
+  /* Semantic status */
+  --color-success:        #16a34a;
   --color-success-subtle: #f0fdf4;
+  --color-warning:        #b45309;
+  --color-warning-subtle: #fef9ec;
+  --color-danger:         #dc2626;
+  --color-danger-subtle:  #fef2f2;
+  --color-info:           #0369a1;
+  --color-info-subtle:    #f0f9ff;
 
-  /* Status: warning */
-  --color-warning: #d97706;
-  --color-warning-subtle: #fffbeb;
-
-  /* Status: danger */
-  --color-danger: #dc2626;
-  --color-danger-subtle: #fef2f2;
-
-  /* Status: info */
-  --color-info: #0891b2;
-  --color-info-subtle: #ecfeff;
+  /* Inputs */
+  --color-input-bg: #FFFFFF;
 
   /* Typography */
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Satoshi', 'Arial', sans-serif;
 
-  /* Border radius */
+  /* Radius */
   --radius-sm: 4px;
   --radius-md: 6px;
   --radius-lg: 8px;
 
   /* Layout */
-  --sidebar-width: 220px;
+  --sidebar-width:           224px;
   --sidebar-collapsed-width: 48px;
-  --header-height: 48px;
+  --header-height:           56px;
 }
 
-* {
+/* ═══════════════════════════════════════════════════════════════
+   DESIGN TOKENS — Dark mode
+   ═══════════════════════════════════════════════════════════════ */
+[data-theme="dark"] {
+  /* Surfaces */
+  --color-canvas:           #0A0A0A;
+  --color-surface:          #171717;
+  --color-surface-elevated: #1A1A1A;
+  --color-hover:            #262626;
+
+  /* Text */
+  --color-text-primary:   #FFFFFF;
+  --color-text-secondary: #9A9A9B;
+  --color-text-muted:     #737373;
+
+  /* Borders */
+  --color-border:        #333333;
+  --color-border-subtle: #262626;
+
+  /* Navigation active state */
+  --color-nav-active-bg:   #333333;
+  --color-nav-active-text: #FFFFFF;
+
+  /* Accent */
+  --color-accent:        #FFFFFF;
+  --color-accent-hover:  #E5E5E5;
+  --color-accent-subtle: #262626;
+
+  /* Semantic status (adjusted for dark) */
+  --color-success:        #22c55e;
+  --color-success-subtle: #052e16;
+  --color-warning:        #f59e0b;
+  --color-warning-subtle: #1a1200;
+  --color-danger:         #ef4444;
+  --color-danger-subtle:  #1a0505;
+  --color-info:           #38bdf8;
+  --color-info-subtle:    #061826;
+
+  /* Inputs */
+  --color-input-bg: #1A1A1A;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   BASE RESET
+   ═══════════════════════════════════════════════════════════════ */
+*,
+*::before,
+*::after {
   box-sizing: border-box;
 }
 
@@ -64,9 +118,15 @@ body,
   padding: 0;
 }
 
+html {
+  /* Smooth OS-level theme transitions */
+  color-scheme: light dark;
+}
+
 body {
   font-family: var(--font-sans);
   font-size: 14px;
+  font-weight: 400;
   line-height: 1.5;
   color: var(--color-text-primary);
   background-color: var(--color-canvas);
@@ -74,16 +134,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Focus ring for accessibility */
+/* ═══════════════════════════════════════════════════════════════
+   FOCUS RING
+   ═══════════════════════════════════════════════════════════════ */
 *:focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 2px solid var(--color-border);
   outline-offset: 2px;
 }
 
-/* Scrollbar styling */
+/* ═══════════════════════════════════════════════════════════════
+   SCROLLBAR
+   ═══════════════════════════════════════════════════════════════ */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -99,21 +163,62 @@ body {
   background: var(--color-text-muted);
 }
 
-/* Sidebar transition */
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR TRANSITION
+   ═══════════════════════════════════════════════════════════════ */
 .sidebar-transition {
   transition: width 200ms ease-in-out;
 }
 
-/* Skeleton animation */
+/* ═══════════════════════════════════════════════════════════════
+   SKELETON ANIMATION
+   ═══════════════════════════════════════════════════════════════ */
 @keyframes skeleton-pulse {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.4;
-  }
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
 }
 
 .skeleton-animate {
   animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TYPOGRAPHY UTILITIES
+   ═══════════════════════════════════════════════════════════════ */
+.heading-page {
+  font-family: var(--font-sans);
+  font-size: 28px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  color: var(--color-text-primary);
+}
+
+.heading-section {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--color-text-primary);
+}
+
+.text-metric {
+  font-family: var(--font-sans);
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  color: var(--color-text-primary);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   THEME TRANSITION — smooth token swaps
+   ═══════════════════════════════════════════════════════════════ */
+body,
+.sidebar-transition,
+header,
+aside,
+main {
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
 }

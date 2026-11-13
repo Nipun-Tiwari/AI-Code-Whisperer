@@ -1,7 +1,9 @@
-import { Activity, ChevronRight } from 'lucide-react'
-import { PageHeader, DataTable, StatusBadge } from '@/components'
-import type { AgentTask } from '@/types'
-import type { ColumnDef } from '@/components'
+import { useState } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { Activity, RefreshCw, ChevronDown, ChevronRight, Copy } from 'lucide-react'
+import { PageHeader, StatusBadge, EmptyState, ErrorState, LoadingSkeleton } from '@/components'
+import { listAgentActivity, retryTask } from '@/api/tasks'
+import { clsx } from 'clsx'
 
 const TASK_TYPE_LABELS: Record<string, string> = {
   repository_qa: 'Repository Q&A',
@@ -10,101 +12,135 @@ const TASK_TYPE_LABELS: Record<string, string> = {
   documentation: 'Documentation',
 }
 
-export function AgentActivityPage() {
-  // TODO: load tasks from /api/v1/agent-activity
-  const tasks: AgentTask[] = []
-  const isLoading = false
+export default function AgentActivityPage() {
+  const qc = useQueryClient()
+  const [expandedTask, setExpandedTask] = useState<string | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
 
-  const columns: ColumnDef<AgentTask>[] = [
-    {
-      key: 'type',
-      header: 'Task Type',
-      width: '160px',
-      render: (t) => (
-        <span className="text-sm text-text-primary">
-          {TASK_TYPE_LABELS[t.taskType] ?? t.taskType}
-        </span>
-      ),
-    },
-    {
-      key: 'status',
-      header: 'Status',
-      width: '130px',
-      render: (t) => <StatusBadge status={t.status as never} size="sm" />,
-    },
-    {
-      key: 'repository',
-      header: 'Repository',
-      render: (t) => (
-        <span className="text-sm text-text-secondary font-mono">{t.repositoryId}</span>
-      ),
-    },
-    {
-      key: 'tokens',
-      header: 'Tokens Used',
-      width: '120px',
-      align: 'right',
-      render: (t) => (
-        <span className="text-sm tabular-nums text-text-secondary">
-          {t.tokensUsed !== null ? t.tokensUsed.toLocaleString() : '—'}
-        </span>
-      ),
-    },
-    {
-      key: 'created',
-      header: 'Started',
-      width: '160px',
-      render: (t) => (
-        <span className="text-sm text-text-muted">
-          {new Date(t.createdAt).toLocaleString()}
-        </span>
-      ),
-    },
-    {
-      key: 'actions',
-      header: '',
-      width: '40px',
-      align: 'right',
-      render: () => (
-        <button
-          title="View details"
-          className="p-1 rounded text-text-muted hover:text-text-primary hover:bg-surface transition-colors"
-          onClick={() => {
-            // TODO: open task detail panel
-          }}
-        >
-          <ChevronRight size={14} />
-        </button>
-      ),
-    },
-  ]
+  const { data: tasks, isLoading, isError, refetch } = useQuery({
+    queryKey: ['agent-activity'],
+    queryFn: () => listAgentActivity(50),
+    refetchInterval: 10000,
+  })
+
+  const retryMutation = useMutation({
+    mutationFn: retryTask,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-activity'] }),
+  })
+
+  const handleCopyId = (id: string) => {
+    navigator.clipboard.writeText(id)
+    setCopiedId(id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
+
+  const isRetryable = (status: string) => ['failed', 'partial', 'paused'].includes(status)
+
+  if (isLoading) return (
+    <div className="p-6"><PageHeader title="Agent Activity" subtitle="Track agent task execution and results." /><LoadingSkeleton rows={5} /></div>
+  )
+  if (isError) return (
+    <div className="p-6"><PageHeader title="Agent Activity" subtitle="Track agent task execution and results." /><ErrorState title="Failed to load activity" message="Could not retrieve task history." onRetry={() => refetch()} /></div>
+  )
 
   return (
-    <div className="flex flex-col h-full">
-      <PageHeader
-        title="Agent Activity"
-        subtitle="Inspect recent tasks, agent steps and tool call history"
-      />
-
-      <div className="flex-1 p-6 overflow-y-auto">
-        {/* TODO: add filter bar for task type, status, repository */}
-        <DataTable
-          columns={columns}
-          data={tasks}
-          keyExtractor={(t) => t.id}
-          isLoading={isLoading}
-          emptyTitle="No agent tasks yet"
-          emptyDescription="Tasks appear here once you submit a question, investigation, security scan or documentation request."
-          emptyAction={
-            <div className="flex items-center gap-2">
-              <Activity size={14} className="text-text-muted" />
-              <span className="text-sm text-text-muted">
-                All task traces are retained for inspection.
-              </span>
-            </div>
-          }
-        />
+    <div className="p-6 max-w-5xl mx-auto space-y-6">
+      <div className="flex items-start justify-between">
+        <PageHeader title="Agent Activity" subtitle="Track agent task execution, results, and token usage." />
+        <button
+          className="flex items-center gap-1.5 px-3 py-2 border border-border text-sm text-text-secondary rounded-md hover:border-accent/50 transition-colors"
+          onClick={() => refetch()}
+        >
+          <RefreshCw size={13} />
+          Refresh
+        </button>
       </div>
+
+      {!tasks?.length ? (
+        <EmptyState
+          icon={Activity}
+          title="No tasks yet"
+          description="Agent tasks will appear here when you run investigations, security scans, or generate documentation."
+        />
+      ) : (
+        <div className="border border-border rounded-lg overflow-hidden bg-surface">
+          {tasks.map((task) => (
+            <div key={task.task_id} className={clsx('border-b border-border last:border-b-0', expandedTask === task.task_id && 'bg-surface-elevated')}>
+              {/* Row */}
+              <div
+                className="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-surface-elevated transition-colors"
+                onClick={() => setExpandedTask(expandedTask === task.task_id ? null : task.task_id)}
+              >
+                <div className="w-4">
+                  {expandedTask === task.task_id ? <ChevronDown size={13} className="text-text-muted" /> : <ChevronRight size={13} className="text-text-muted" />}
+                </div>
+
+                <StatusBadge status={(task.status || 'unknown') as 'completed' | 'failed' | 'partial' | 'paused' | 'queued' | 'unknown'} />
+
+                <span className="text-sm text-text-primary flex-1 min-w-0 truncate">
+                  {TASK_TYPE_LABELS[task.task_type] || task.task_type}
+                </span>
+
+                <span className="text-xs text-text-muted w-32 truncate">
+                  {new Date(task.created_at).toLocaleString()}
+                </span>
+
+                {task.completed_at && (
+                  <span className="text-xs text-text-muted w-20 text-right">
+                    {Math.round((new Date(task.completed_at).getTime() - new Date(task.created_at).getTime()) / 1000)}s
+                  </span>
+                )}
+
+                {task.tokens_used != null && (
+                  <span className="text-xs text-text-muted w-20 text-right font-mono">
+                    {task.tokens_used.toLocaleString()} tok
+                  </span>
+                )}
+
+                <div className="flex items-center gap-1">
+                  <button
+                    className="p-1 rounded hover:bg-surface transition-colors text-text-muted hover:text-text-secondary"
+                    title="Copy task ID"
+                    onClick={(e) => { e.stopPropagation(); handleCopyId(task.task_id) }}
+                  >
+                    <Copy size={12} />
+                  </button>
+
+                  {isRetryable(task.status) && (
+                    <button
+                      className="px-2 py-1 text-xs border border-border rounded hover:border-accent/50 text-text-secondary transition-colors"
+                      onClick={(e) => { e.stopPropagation(); retryMutation.mutate(task.task_id) }}
+                      disabled={retryMutation.isPending}
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded detail */}
+              {expandedTask === task.task_id && (
+                <div className="px-10 pb-4 space-y-3 border-t border-border">
+                  <div className="grid grid-cols-2 gap-4 pt-3">
+                    <div className="space-y-1">
+                      <span className="text-xs text-text-muted uppercase tracking-wide">Task ID</span>
+                      <div className="font-mono text-xs text-text-secondary">{task.task_id}</div>
+                    </div>
+                    <div className="space-y-1">
+                      <span className="text-xs text-text-muted uppercase tracking-wide">Repository</span>
+                      <div className="font-mono text-xs text-text-secondary">{task.repository_id}</div>
+                    </div>
+                  </div>
+
+                  {copiedId === task.task_id && (
+                    <span className="text-xs text-success">Task ID copied</span>
+                  )}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

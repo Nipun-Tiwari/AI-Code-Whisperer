@@ -7,11 +7,13 @@ from .index_job import IndexJob, IndexJobMode, IndexJobStatus
 from .file_record import FileRecord, ParseStatus
 from .symbol_record import SymbolRecord, SymbolKind
 from .code_chunk import CodeChunk
+from .embedding_record import EmbeddingRecord
 from .conversation import Conversation
 from .agent_task import AgentTask, TaskType, TaskStatus
 from .security_scan import SecurityScan, SecurityFinding
 from .usage_event import UsageEvent
 from .quota_snapshot import QuotaSnapshot
+from .mcp_tool_call import MCPToolCall
 
 __all__ = [
     "Base",
@@ -30,6 +32,7 @@ __all__ = [
     "SymbolRecord",
     "SymbolKind",
     "CodeChunk",
+    "EmbeddingRecord",
     "Conversation",
     "AgentTask",
     "TaskType",
@@ -38,4 +41,5 @@ __all__ = [
     "SecurityFinding",
     "UsageEvent",
     "QuotaSnapshot",
+    "MCPToolCall",
 ]

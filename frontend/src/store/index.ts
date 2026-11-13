@@ -1,5 +1,29 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 import type { User } from '@/types'
+
+// ── Theme ─────────────────────────────────────────────────────────────────────
+
+export type ThemePreference = 'light' | 'dark' | 'system'
+
+interface ThemeState {
+  preference: ThemePreference
+  setPreference: (p: ThemePreference) => void
+}
+
+export const useThemeStore = create<ThemeState>()(
+  persist(
+    (set) => ({
+      preference: 'system',
+      setPreference: (preference) => set({ preference }),
+    }),
+    {
+      name: 'cw-theme',
+      // Only persist the preference string, not the setter
+      partialize: (state) => ({ preference: state.preference }),
+    },
+  ),
+)
 
 interface AuthState {
   user: User | null

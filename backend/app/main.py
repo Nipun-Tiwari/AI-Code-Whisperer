@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import structlog
 from contextlib import asynccontextmanager
 from collections.abc import AsyncGenerator
@@ -38,9 +39,19 @@ logger = structlog.get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("CodeWhisperer API starting", environment=get_settings().environment)
-    yield
-    await dispose_engine()
-    logger.info("CodeWhisperer API shutdown complete")
+    # Start background indexing worker
+    from app.indexing.worker import run_worker
+    worker_task = asyncio.create_task(run_worker(), name="indexing_worker")
+    try:
+        yield
+    finally:
+        worker_task.cancel()
+        try:
+            await worker_task
+        except asyncio.CancelledError:
+            pass
+        await dispose_engine()
+        logger.info("CodeWhisperer API shutdown complete")
 
 
 def create_app() -> FastAPI:
@@ -106,6 +117,14 @@ def create_app() -> FastAPI:
 
     # Mount v1 routes
     app.include_router(v1_router)
+
+    # Mount MCP server at /mcp (SSE transport)
+    try:
+        from app.mcp.server import mcp_server
+        app.mount("/mcp", mcp_server.sse_app())
+    except Exception as _mcp_err:
+        import logging
+        logging.getLogger(__name__).warning("MCP server mount failed: %s", _mcp_err)
 
     # Health check (unauthenticated)
     @app.get("/health", tags=["health"])

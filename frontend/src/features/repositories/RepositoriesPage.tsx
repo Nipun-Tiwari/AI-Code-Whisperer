@@ -1,65 +1,98 @@
-import { Plus, GitBranch, RefreshCw, Trash2 } from 'lucide-react'
-import { Link } from 'react-router-dom'
-import { PageHeader, DataTable, StatusBadge, ConfirmationDialog } from '@/components'
-import { useRepositories } from '@/hooks'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
+import { Plus, RefreshCw, Trash2, ExternalLink, GitBranch } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { PageHeader, DataTable, StatusBadge, ConfirmationDialog } from '@/components'
+import {
+  listRepositories,
+  listGitHubConnections,
+  listAccessibleRepos,
+  addRepository,
+  removeRepository,
+  startIndexJob,
+  type GitHubRepo,
+} from '@/api/repositories'
 import type { Repository } from '@/types'
-import type { ColumnDef } from '@/components'
 import { clsx } from 'clsx'
 
-export function RepositoriesPage() {
-  const { data, isLoading, error, refetch } = useRepositories()
-  const repos = data?.items ?? []
-  const [repoToDelete, setRepoToDelete] = useState<Repository | null>(null)
+const ACTIVE_STATUSES = new Set(['queued', 'fetching', 'classifying', 'parsing', 'summarizing', 'embedding', 'persisting'])
 
-  const columns: ColumnDef<Repository>[] = [
+export default function RepositoriesPage() {
+  const queryClient = useQueryClient()
+  const [showAddModal, setShowAddModal] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<Repository | null>(null)
+
+  const hasActive = (repos: Repository[]) =>
+    repos.some((r) => ACTIVE_STATUSES.has(r.status))
+
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['repositories'],
+    queryFn: () => listRepositories(),
+    refetchInterval: (query) => {
+      const repos = query.state.data?.items ?? []
+      return hasActive(repos) ? 5000 : false
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => removeRepository(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['repositories'] })
+      setDeleteTarget(null)
+    },
+  })
+
+  const indexMutation = useMutation({
+    mutationFn: (id: string) => startIndexJob(id, 'full'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['repositories'] }),
+  })
+
+  const repos = data?.items ?? []
+
+  const columns = [
     {
       key: 'name',
       header: 'Repository',
-      render: (repo) => (
-        <Link
-          to={`/repositories/${repo.id}`}
-          className="flex items-center gap-2.5 hover:text-accent transition-colors min-w-0"
-        >
-          <GitBranch size={14} className="shrink-0 text-text-muted" />
-          <div className="min-w-0">
-            <p className="font-medium text-text-primary truncate">
-              {repo.owner}/{repo.name}
-            </p>
-            {repo.description && (
-              <p className="text-xs text-text-muted truncate">{repo.description}</p>
-            )}
-          </div>
-        </Link>
+      render: (repo: Repository) => (
+        <div className="flex flex-col gap-0.5">
+          <Link
+            to={`/repositories/${repo.id}`}
+            className="font-medium text-text-primary hover:text-accent transition-colors"
+          >
+            {repo.owner}/{repo.name}
+          </Link>
+          {repo.description && (
+            <span className="text-xs text-text-muted line-clamp-1">{repo.description}</span>
+          )}
+        </div>
       ),
     },
     {
       key: 'visibility',
       header: 'Visibility',
-      width: '100px',
-      render: (repo) => (
+      render: (repo: Repository) => (
         <span className="text-xs text-text-secondary capitalize">{repo.visibility}</span>
       ),
     },
     {
       key: 'branch',
       header: 'Branch',
-      width: '140px',
-      render: (repo) => (
-        <span className="font-mono text-xs text-text-secondary">{repo.selectedBranch}</span>
+      render: (repo: Repository) => (
+        <span className="flex items-center gap-1 text-sm text-text-secondary">
+          <GitBranch size={12} />
+          {repo.selectedBranch}
+        </span>
       ),
     },
     {
       key: 'status',
       header: 'Index Status',
-      width: '140px',
-      render: (repo) => <StatusBadge status={repo.status as never} size="sm" />,
+      render: (repo: Repository) => <StatusBadge status={repo.status} />,
     },
     {
-      key: 'lastIndexed',
+      key: 'indexed',
       header: 'Last Indexed',
-      width: '160px',
-      render: (repo) =>
+      render: (repo: Repository) =>
         repo.latestVersion ? (
           <span className="text-xs text-text-secondary">
             {new Date(repo.latestVersion.indexedAt).toLocaleDateString()}
@@ -71,29 +104,22 @@ export function RepositoriesPage() {
     {
       key: 'actions',
       header: '',
-      width: '80px',
-      align: 'right',
-      render: (repo) => (
-        <div className="flex items-center justify-end gap-1">
+      render: (repo: Repository) => (
+        <div className="flex items-center gap-1 justify-end">
           <button
-            title="Refresh index"
-            className="p-1.5 rounded text-text-muted hover:text-text-primary hover:bg-surface transition-colors"
-            onClick={(e) => {
-              e.preventDefault()
-              // TODO: trigger index job
-            }}
+            onClick={() => indexMutation.mutate(repo.id)}
+            disabled={ACTIVE_STATUSES.has(repo.status) || indexMutation.isPending}
+            className="p-1.5 rounded hover:bg-surface text-text-secondary hover:text-accent transition-colors disabled:opacity-40"
+            title="Start indexing"
           >
-            <RefreshCw size={13} />
+            <RefreshCw size={14} className={clsx(ACTIVE_STATUSES.has(repo.status) && 'animate-spin')} />
           </button>
           <button
+            onClick={() => setDeleteTarget(repo)}
+            className="p-1.5 rounded hover:bg-danger-subtle text-text-secondary hover:text-danger transition-colors"
             title="Remove repository"
-            className="p-1.5 rounded text-text-muted hover:text-danger hover:bg-danger-subtle transition-colors"
-            onClick={(e) => {
-              e.preventDefault()
-              setRepoToDelete(repo)
-            }}
           >
-            <Trash2 size={13} />
+            <Trash2 size={14} />
           </button>
         </div>
       ),
@@ -101,66 +127,183 @@ export function RepositoriesPage() {
   ]
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="p-6 space-y-6">
       <PageHeader
         title="Repositories"
-        subtitle="Manage connected repositories and indexing"
+        subtitle="Connect and manage your GitHub repositories for indexing and analysis."
         actions={
           <button
-            className={clsx(
-              'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium',
-              'bg-accent text-white hover:bg-accent-hover transition-colors',
-            )}
-            onClick={() => {
-              // TODO: open Add Repository dialog (Phase 1 completion after credentials)
-            }}
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors"
           >
-            <Plus size={14} />
+            <Plus size={16} />
             Add Repository
           </button>
         }
       />
 
-      <div className="flex-1 p-6 overflow-y-auto">
-        <DataTable
-          columns={columns}
-          data={repos}
-          keyExtractor={(r) => r.id}
-          isLoading={isLoading}
-          error={error ? 'Failed to load repositories' : null}
-          onRetry={() => refetch()}
-          emptyTitle="No repositories connected"
-          emptyDescription="Connect a GitHub repository to start indexing and analyzing your code."
-          emptyAction={
-            <button
-              className={clsx(
-                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium',
-                'bg-accent text-white hover:bg-accent-hover transition-colors',
-              )}
-            >
-              <Plus size={14} />
-              Add Repository
-            </button>
-          }
+      <DataTable
+        columns={columns}
+        data={repos}
+        keyExtractor={(r) => r.id}
+        isLoading={isLoading}
+        error={error ? String(error) : undefined}
+        emptyTitle="No repositories connected"
+        emptyDescription="Connect a GitHub repository to start indexing and analyzing your code."
+        emptyAction={
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors"
+          >
+            <Plus size={16} />
+            Add Repository
+          </button>
+        }
+      />
+
+      {showAddModal && (
+        <AddRepositoryModal
+          onClose={() => setShowAddModal(false)}
+          onAdded={() => {
+            setShowAddModal(false)
+            queryClient.invalidateQueries({ queryKey: ['repositories'] })
+          }}
         />
-      </div>
+      )}
 
       <ConfirmationDialog
-        open={repoToDelete !== null}
-        onOpenChange={(open) => !open && setRepoToDelete(null)}
-        title="Remove repository"
-        description={
-          repoToDelete
-            ? `Remove ${repoToDelete.owner}/${repoToDelete.name}? This will delete all indexed data, vectors, summaries and job history associated with this repository.`
-            : ''
-        }
-        confirmLabel="Remove repository"
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null) }}
+        title="Remove Repository"
+        description={`Remove "${deleteTarget?.owner}/${deleteTarget?.name}"? This will delete all indexed data for this repository.`}
+        confirmLabel="Remove"
         variant="danger"
-        onConfirm={() => {
-          // TODO: call removeRepository(repoToDelete.id)
-          setRepoToDelete(null)
-        }}
+        onConfirm={() => deleteTarget && deleteMutation.mutate(deleteTarget.id)}
+        isLoading={deleteMutation.isPending}
       />
+    </div>
+  )
+}
+
+// ── Add Repository Modal ──────────────────────────────────────────────────────
+
+function AddRepositoryModal({
+  onClose,
+  onAdded,
+}: {
+  onClose: () => void
+  onAdded: () => void
+}) {
+  const [selectedRepo, setSelectedRepo] = useState<GitHubRepo | null>(null)
+  const [branch, setBranch] = useState('')
+
+  const { data: connections } = useQuery({
+    queryKey: ['github-connections'],
+    queryFn: listGitHubConnections,
+  })
+
+  const { data: accessibleRepos, isLoading: loadingRepos } = useQuery({
+    queryKey: ['accessible-repos'],
+    queryFn: listAccessibleRepos,
+    enabled: (connections?.length ?? 0) > 0,
+  })
+
+  const addMutation = useMutation({
+    mutationFn: () =>
+      addRepository({
+        owner: selectedRepo!.owner,
+        name: selectedRepo!.name,
+        branch: branch || selectedRepo!.default_branch,
+        github_connection_id: selectedRepo!.github_connection_id,
+      }),
+    onSuccess: onAdded,
+  })
+
+  const hasConnections = (connections?.length ?? 0) > 0
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+      <div className="bg-canvas border border-border rounded-lg shadow-lg w-full max-w-lg mx-4">
+        <div className="flex items-center justify-between p-4 border-b border-border">
+          <h2 className="text-base font-semibold text-text-primary">Add Repository</h2>
+          <button onClick={onClose} className="text-text-secondary hover:text-text-primary p-1">
+            ×
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {!hasConnections ? (
+            <div className="text-center py-6 space-y-3">
+              <p className="text-sm text-text-secondary">
+                Connect your GitHub account to browse and add repositories.
+              </p>
+              <a
+                href="/api/v1/integrations/github/connect"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors"
+              >
+                <ExternalLink size={14} />
+                Connect GitHub
+              </a>
+            </div>
+          ) : loadingRepos ? (
+            <p className="text-sm text-text-secondary text-center py-4">Loading repositories…</p>
+          ) : (
+            <>
+              <div className="max-h-64 overflow-y-auto space-y-1 border border-border rounded-md p-2">
+                {(accessibleRepos ?? []).map((repo) => (
+                  <button
+                    key={repo.id}
+                    onClick={() => {
+                      setSelectedRepo(repo)
+                      setBranch(repo.default_branch)
+                    }}
+                    className={clsx(
+                      'w-full text-left px-3 py-2 rounded text-sm transition-colors',
+                      selectedRepo?.id === repo.id
+                        ? 'bg-accent-subtle text-accent'
+                        : 'hover:bg-surface text-text-primary',
+                    )}
+                  >
+                    <span className="font-medium">{repo.full_name}</span>
+                    <span className="ml-2 text-xs text-text-muted capitalize">{repo.visibility}</span>
+                  </button>
+                ))}
+              </div>
+
+              {selectedRepo && (
+                <div className="space-y-2">
+                  <label className="block text-xs font-medium text-text-secondary">Branch</label>
+                  <input
+                    type="text"
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-accent bg-canvas text-text-primary"
+                    placeholder="main"
+                  />
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 p-4 border-t border-border">
+          <button
+            onClick={onClose}
+            className="px-3 py-2 text-sm text-text-secondary hover:text-text-primary transition-colors"
+          >
+            Cancel
+          </button>
+          {hasConnections && (
+            <button
+              onClick={() => addMutation.mutate()}
+              disabled={!selectedRepo || addMutation.isPending}
+              className="px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
+            >
+              {addMutation.isPending ? 'Adding…' : 'Add Repository'}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

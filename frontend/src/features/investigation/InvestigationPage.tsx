@@ -1,100 +1,236 @@
-import { Search, GitBranch, Send } from 'lucide-react'
 import { useState } from 'react'
-import { PageHeader, EmptyState } from '@/components'
+import { useMutation } from '@tanstack/react-query'
+import { Search, AlertCircle, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
+import { PageHeader, StatusBadge, EmptyState } from '@/components'
+import { useRepositories } from '@/hooks'
+import { startInvestigation } from '@/api/investigations'
+import type { TaskResponse } from '@/api/tasks'
 import { clsx } from 'clsx'
 
-export function InvestigationPage() {
+type Hypothesis = {
+  rank: number
+  description: string
+  supporting_evidence: string[]
+  confidence: 'high' | 'medium' | 'low'
+}
+
+type ExecutionStep = {
+  step: number
+  location: string
+  description: string
+  evidence: 'source_fact' | 'inferred'
+}
+
+type InvestigationResult = {
+  symptom_summary: string
+  affected_files: string[]
+  execution_path: ExecutionStep[]
+  hypotheses: Hypothesis[]
+  suggested_remediation: string
+  limitations: string
+  follow_up_checks: string[]
+}
+
+export default function InvestigationPage() {
+  const { data: repos } = useRepositories()
+  const [selectedRepo, setSelectedRepo] = useState('')
   const [description, setDescription] = useState('')
+  const [expandedHypothesis, setExpandedHypothesis] = useState<number | null>(0)
+  const [result, setResult] = useState<TaskResponse | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      startInvestigation({
+        repository_id: selectedRepo,
+        description,
+      }),
+    onSuccess: (data) => setResult(data),
+  })
+
+  const investigationResult = result?.result as InvestigationResult | undefined
+
+  const confidenceColor: Record<string, string> = {
+    high: 'text-danger',
+    medium: 'text-warning',
+    low: 'text-text-secondary',
+  }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="p-6 max-w-4xl mx-auto space-y-6">
       <PageHeader
-        title="Investigations"
-        subtitle="Submit a defect description to trace code-level root causes"
+        title="Code Investigation"
+        subtitle="Trace likely root causes of reported defects using indexed repository evidence."
       />
 
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-3xl mx-auto space-y-6">
-          {/* Investigation form */}
-          <div className="border border-border rounded-lg p-5 space-y-4">
-            <h2 className="text-sm font-semibold text-text-primary">Start an Investigation</h2>
-
-            {/* Repository selector */}
-            <div>
-              <label className="block text-xs font-medium text-text-secondary mb-1.5">
-                Repository
-              </label>
-              <button
-                className={clsx(
-                  'w-full flex items-center gap-1.5 px-3 py-2 rounded-md border text-sm text-left',
-                  'border-border text-text-secondary hover:bg-surface transition-colors',
-                )}
-              >
-                <GitBranch size={13} />
-                Select repository
-                <span className="ml-auto text-xs text-text-muted">required</span>
-              </button>
-            </div>
-
-            {/* Issue description */}
-            <div>
-              <label
-                htmlFor="issue-description"
-                className="block text-xs font-medium text-text-secondary mb-1.5"
-              >
-                Defect or issue description
-              </label>
-              <textarea
-                id="issue-description"
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder={`Describe the defect or unexpected behaviour you're investigating.\n\nExample: "API endpoint /users/profile returns a 500 error when the user has no profile photo set. The error message shows NullPointerException in UserService.getProfile()."`}
-                className={clsx(
-                  'w-full resize-none rounded-lg border border-border bg-canvas px-3 py-2.5 text-sm',
-                  'text-text-primary placeholder:text-text-muted',
-                  'focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent',
-                  'min-h-[140px]',
-                )}
-                rows={6}
-              />
-              <p className="mt-1 text-xs text-text-muted">
-                Include error messages, affected endpoints, or observed symptoms. CodeWhisperer will
-                trace code-level causes from repository evidence only — not runtime data.
-              </p>
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                disabled={!description.trim()}
-                className={clsx(
-                  'inline-flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium',
-                  'bg-accent text-white hover:bg-accent-hover transition-colors',
-                  'disabled:opacity-40 disabled:cursor-not-allowed',
-                )}
-                onClick={() => {
-                  // TODO: call POST /api/v1/investigations
-                }}
-              >
-                <Send size={13} />
-                Start Investigation
-              </button>
-            </div>
-          </div>
-
-          {/* Results area */}
-          <div className="border border-border border-dashed rounded-lg">
-            <EmptyState
-              icon={Search}
-              title="No investigation started"
-              description="Submit a defect description above to begin code-level root-cause analysis."
-              size="md"
-            />
-          </div>
-
-          {/* TODO: render investigation report when task completes */}
-          {/* TODO: show task progress stages: Planning, Retrieving evidence, Tracing code, Analyzing hypotheses, Synthesizing */}
+      {/* Input form */}
+      <div className="border border-border rounded-lg p-5 space-y-4 bg-surface">
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-text-primary">Repository</label>
+          <select
+            className="w-full border border-border rounded-md px-3 py-2 text-sm bg-canvas focus:outline-none focus:ring-1 focus:ring-accent"
+            value={selectedRepo}
+            onChange={(e) => setSelectedRepo(e.target.value)}
+          >
+            <option value="">Select a repository...</option>
+            {repos?.items?.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.owner}/{r.name}
+              </option>
+            ))}
+          </select>
         </div>
+
+        <div className="space-y-1">
+          <label className="text-sm font-medium text-text-primary">Issue description</label>
+          <textarea
+            className="w-full border border-border rounded-md px-3 py-2 text-sm bg-canvas focus:outline-none focus:ring-1 focus:ring-accent min-h-[120px] resize-y"
+            placeholder="Describe the error or unexpected behaviour. Include error messages, affected features, or reproduction steps."
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+          />
+        </div>
+
+        <button
+          className="flex items-center gap-2 px-4 py-2 bg-accent text-white text-sm font-medium rounded-md hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          disabled={!selectedRepo || !description.trim() || mutation.isPending}
+          onClick={() => mutation.mutate()}
+        >
+          {mutation.isPending ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <Search size={14} />
+          )}
+          {mutation.isPending ? 'Investigating...' : 'Start Investigation'}
+        </button>
+
+        {mutation.isError && (
+          <p className="text-sm text-danger">Investigation failed. Please try again.</p>
+        )}
       </div>
+
+      {/* Results */}
+      {mutation.isPending && (
+        <div className="border border-border rounded-lg p-6 space-y-3 bg-surface">
+          <div className="flex items-center gap-2 text-text-secondary text-sm">
+            <Loader2 size={14} className="animate-spin" />
+            <span>Planning investigation...</span>
+          </div>
+          <div className="text-xs text-text-muted">Retrieving evidence and tracing code paths</div>
+        </div>
+      )}
+
+      {investigationResult && (
+        <div className="space-y-4">
+          {/* Symptom summary */}
+          <div className="border border-border rounded-lg p-5 bg-surface space-y-2">
+            <div className="flex items-center gap-2">
+              <AlertCircle size={14} className="text-warning" />
+              <span className="text-sm font-medium text-text-primary">Symptom</span>
+              <StatusBadge status={(result?.status === 'completed' ? 'completed' : 'partial') as 'completed' | 'partial'} />
+            </div>
+            <p className="text-sm text-text-secondary">{investigationResult.symptom_summary}</p>
+            {investigationResult.affected_files.length > 0 && (
+              <div className="flex flex-wrap gap-1 mt-2">
+                {investigationResult.affected_files.map((f) => (
+                  <span key={f} className="text-xs font-mono bg-surface-elevated border border-border px-2 py-0.5 rounded text-text-secondary">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Execution path */}
+          {investigationResult.execution_path.length > 0 && (
+            <div className="border border-border rounded-lg p-5 bg-surface space-y-3">
+              <h3 className="text-sm font-medium text-text-primary">Execution Path</h3>
+              <div className="space-y-2">
+                {investigationResult.execution_path.map((step) => (
+                  <div key={step.step} className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <div className="w-5 h-5 rounded-full bg-accent-subtle border border-accent text-accent text-xs flex items-center justify-center font-mono shrink-0">
+                        {step.step}
+                      </div>
+                      <div className="w-px flex-1 bg-border mt-1" />
+                    </div>
+                    <div className="pb-3 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-mono text-accent">{step.location}</span>
+                        <span className={clsx(
+                          'text-xs px-1.5 py-0.5 rounded border',
+                          step.evidence === 'source_fact'
+                            ? 'bg-success-subtle border-success/30 text-success'
+                            : 'bg-warning-subtle border-warning/30 text-warning'
+                        )}>
+                          {step.evidence === 'source_fact' ? 'Source fact' : 'Inferred'}
+                        </span>
+                      </div>
+                      <p className="text-sm text-text-secondary mt-0.5">{step.description}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Hypotheses */}
+          {investigationResult.hypotheses.length > 0 && (
+            <div className="border border-border rounded-lg p-5 bg-surface space-y-3">
+              <h3 className="text-sm font-medium text-text-primary">Root Cause Hypotheses</h3>
+              <div className="space-y-2">
+                {investigationResult.hypotheses.map((h) => (
+                  <div key={h.rank} className="border border-border rounded-md overflow-hidden">
+                    <button
+                      className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-elevated transition-colors"
+                      onClick={() => setExpandedHypothesis(expandedHypothesis === h.rank ? null : h.rank)}
+                    >
+                      <span className="text-xs font-medium text-text-muted w-5">#{h.rank}</span>
+                      <span className="flex-1 text-sm text-text-primary">{h.description}</span>
+                      <span className={clsx('text-xs font-medium', confidenceColor[h.confidence])}>
+                        {h.confidence}
+                      </span>
+                      {expandedHypothesis === h.rank ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </button>
+                    {expandedHypothesis === h.rank && h.supporting_evidence.length > 0 && (
+                      <div className="px-4 pb-3 border-t border-border bg-surface-elevated">
+                        <ul className="mt-2 space-y-1">
+                          {h.supporting_evidence.map((e, i) => (
+                            <li key={i} className="text-xs text-text-secondary font-mono">{e}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Remediation */}
+          {investigationResult.suggested_remediation && (
+            <div className="border border-border rounded-lg p-5 bg-surface space-y-2">
+              <h3 className="text-sm font-medium text-text-primary">Suggested Remediation</h3>
+              <p className="text-sm text-text-secondary whitespace-pre-wrap">{investigationResult.suggested_remediation}</p>
+            </div>
+          )}
+
+          {/* Limitations */}
+          {investigationResult.limitations && (
+            <div className="border border-border/50 rounded-lg p-4 bg-warning-subtle text-warning text-xs">
+              <span className="font-medium">Limitations: </span>
+              {investigationResult.limitations}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!investigationResult && !mutation.isPending && !mutation.isError && (
+        <EmptyState
+          icon={Search}
+          title="No investigation yet"
+          description="Select a repository, describe the issue, and start an investigation."
+        />
+      )}
     </div>
   )
 }

@@ -25,7 +25,7 @@ interface LoadingSkeletonProps {
 
 export function LoadingSkeleton({ rows = 3, className }: LoadingSkeletonProps) {
   return (
-    <div className={clsx('space-y-3 p-6', className)} aria-label="Loading" role="status">
+    <div className={clsx('space-y-3 p-6', className)} aria-label="Loading" role="status" aria-busy="true">
       {Array.from({ length: rows }).map((_, i) => (
         <div key={i} className="flex items-center gap-3">
           <Skeleton className="h-8 w-8 rounded-md shrink-0" />

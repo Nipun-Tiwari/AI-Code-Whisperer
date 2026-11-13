@@ -40,12 +40,13 @@ export function DataTable<T>({
   return (
     <div className={clsx('border border-border rounded-lg overflow-hidden', className)}>
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" role="table">
           <thead>
-            <tr className="bg-surface border-b border-border">
+            <tr className="bg-surface border-b border-border" role="row">
               {columns.map((col) => (
                 <th
                   key={col.key}
+                  scope="col"
                   className={clsx(
                     'px-4 py-2.5 text-xs font-semibold text-text-secondary whitespace-nowrap',
                     col.align === 'right' && 'text-right',
@@ -64,7 +65,8 @@ export function DataTable<T>({
               {data.map((row) => (
                 <tr
                   key={keyExtractor(row)}
-                  className="hover:bg-surface transition-colors duration-100"
+                  role="row"
+                  className="hover:bg-hover transition-colors duration-100"
                 >
                   {columns.map((col) => (
                     <td

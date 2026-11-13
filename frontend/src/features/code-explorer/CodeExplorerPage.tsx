@@ -1,90 +1,153 @@
-import { Search, Code2, GitBranch } from 'lucide-react'
 import { useState } from 'react'
-import { PageHeader, EmptyState } from '@/components'
+import { Search, ChevronDown, ChevronRight, FileCode } from 'lucide-react'
+import { useQuery, useMutation } from '@tanstack/react-query'
+import { PageHeader, LoadingSkeleton } from '@/components'
+import { listRepositories, queryRepository, type EvidenceItem } from '@/api/repositories'
 import { clsx } from 'clsx'
 
-export function CodeExplorerPage() {
-  const [query, setQuery] = useState('')
+export default function CodeExplorerPage() {
+  const [selectedRepoId, setSelectedRepoId] = useState<string>('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [results, setResults] = useState<EvidenceItem[]>([])
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const { data: reposData, isLoading: loadingRepos } = useQuery({
+    queryKey: ['repositories'],
+    queryFn: () => listRepositories(),
+  })
+
+  const repos = reposData?.items ?? []
+  const indexedRepos = repos.filter((r) => r.status === 'indexed' || r.status === 'stale')
+
+  const searchMutation = useMutation({
+    mutationFn: () =>
+      queryRepository({ repository_id: selectedRepoId, question: searchQuery }),
+    onSuccess: (data) => setResults(data.evidence),
+  })
+
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!selectedRepoId || !searchQuery.trim()) return
+    setResults([])
+    searchMutation.mutate()
+  }
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="p-6 space-y-6">
       <PageHeader
         title="Code Explorer"
-        subtitle="Search and browse indexed repository files and symbols"
+        subtitle="Search your repository code using natural language and explore retrieved code snippets."
       />
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* Left: file browser pane */}
-        <div className="w-64 border-r border-border flex flex-col shrink-0">
-          <div className="p-3 border-b border-border">
-            <p className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-2">
-              Repository
-            </p>
-            <button
-              className={clsx(
-                'w-full flex items-center gap-1.5 px-2 py-1.5 rounded border text-xs text-left',
-                'border-border text-text-secondary hover:bg-surface transition-colors',
-              )}
-            >
-              <GitBranch size={11} />
-              Select repository
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto p-3">
-            {/* TODO: render repository file tree here */}
-            <EmptyState
-              icon={Code2}
-              title="No repository selected"
-              description="Select a repository to browse its files."
-              size="sm"
+      <div className="max-w-3xl space-y-4">
+        <div className="flex gap-3">
+          <select
+            value={selectedRepoId}
+            onChange={(e) => {
+              setSelectedRepoId(e.target.value)
+              setResults([])
+            }}
+            className="px-3 py-2 text-sm border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-accent bg-canvas text-text-primary w-56"
+          >
+            <option value="">Select repository…</option>
+            {indexedRepos.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.owner}/{r.name}
+              </option>
+            ))}
+          </select>
+
+          <form onSubmit={handleSearch} className="flex-1 flex gap-2">
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search code, functions, classes…"
+              disabled={!selectedRepoId}
+              className="flex-1 px-3 py-2 text-sm border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-accent bg-canvas text-text-primary placeholder-text-muted disabled:opacity-50"
             />
-          </div>
+            <button
+              type="submit"
+              disabled={!selectedRepoId || !searchQuery.trim() || searchMutation.isPending}
+              className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
+            >
+              <Search size={14} />
+              {searchMutation.isPending ? 'Searching…' : 'Search'}
+            </button>
+          </form>
         </div>
 
-        {/* Right: search + viewer */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          {/* Search bar */}
-          <div className="border-b border-border p-3">
-            <div className="relative">
-              <Search
-                size={14}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-text-muted"
-              />
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search code, symbols or file paths…"
-                className={clsx(
-                  'w-full pl-9 pr-3 py-2 text-sm rounded-md border border-border bg-canvas',
-                  'text-text-primary placeholder:text-text-muted',
-                  'focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent',
-                )}
-              />
-            </div>
-          </div>
-
-          {/* Code viewer area */}
-          <div className="flex-1 overflow-auto">
-            {!query ? (
-              <EmptyState
-                icon={Search}
-                title="Search the codebase"
-                description="Enter a search query to find relevant files, symbols and code snippets."
-                size="md"
-              />
-            ) : (
-              /* TODO: render search results and code viewer */
-              <div className="p-6">
-                <p className="text-sm text-text-muted">
-                  Search results for &ldquo;{query}&rdquo; will appear here.
-                </p>
-                {/* TODO: implement code search via /api/v1/chat/query or MCP search tools */}
-              </div>
-            )}
-          </div>
-        </div>
+        {!selectedRepoId && indexedRepos.length === 0 && !loadingRepos && (
+          <p className="text-sm text-text-secondary">
+            No indexed repositories found. Index a repository first.
+          </p>
+        )}
       </div>
+
+      {searchMutation.isPending && (
+        <div className="max-w-3xl">
+          <LoadingSkeleton rows={5} />
+        </div>
+      )}
+
+      {searchMutation.isError && (
+        <div className="max-w-3xl p-4 border border-danger/30 bg-danger-subtle rounded-md text-sm text-danger">
+          Search failed. Please try again.
+        </div>
+      )}
+
+      {results.length > 0 && !searchMutation.isPending && (
+        <div className="max-w-3xl space-y-2">
+          <p className="text-xs text-text-muted">
+            {results.length} result{results.length !== 1 ? 's' : ''} for "{searchQuery}"
+          </p>
+          {results.map((item) => (
+            <div key={item.chunk_id} className="border border-border rounded-lg overflow-hidden">
+              <button
+                onClick={() => setExpandedId(expandedId === item.chunk_id ? null : item.chunk_id)}
+                className="w-full flex items-center justify-between p-3 hover:bg-surface transition-colors text-left"
+              >
+                <div className="flex items-center gap-2 min-w-0">
+                  <FileCode size={14} className="text-text-muted shrink-0" />
+                  <span className="text-xs font-medium text-text-primary truncate">{item.file_path}</span>
+                  <span className="text-xs text-text-muted shrink-0">
+                    L{item.line_start}–{item.line_end}
+                  </span>
+                  {item.symbol_name && (
+                    <span className="text-xs bg-accent-subtle text-accent px-1.5 py-0.5 rounded shrink-0">
+                      {item.symbol_name.split('.').pop()}
+                    </span>
+                  )}
+                  <span className={clsx(
+                    'text-xs px-1.5 py-0.5 rounded shrink-0',
+                    item.language === 'python' ? 'bg-info-subtle text-info' :
+                    item.language === 'typescript' ? 'bg-accent-subtle text-accent' :
+                    'bg-surface text-text-muted'
+                  )}>
+                    {item.language}
+                  </span>
+                </div>
+                <div className="shrink-0 ml-2 text-text-muted">
+                  {expandedId === item.chunk_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                </div>
+              </button>
+              {expandedId === item.chunk_id && (
+                <div className="border-t border-border">
+                  <pre className="p-3 text-xs font-mono text-text-primary bg-surface-elevated overflow-x-auto whitespace-pre-wrap max-h-80">
+                    {item.text}
+                  </pre>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {results.length === 0 && searchMutation.isSuccess && !searchMutation.isPending && (
+        <p className="text-sm text-text-secondary max-w-3xl">
+          No matching code found for "{searchQuery}". Try different keywords.
+        </p>
+      )}
     </div>
   )
 }

@@ -6,93 +6,82 @@ from fastapi import APIRouter
 from sqlalchemy import select
 
 from app.dependencies import DbDep, UserDep
-from app.exceptions import ForbiddenError, NotFoundError, NotImplementedFeatureError
-from app.models.index_job import IndexJob
-from app.models.repository import Repository
-from app.schemas.index_job import IndexJobSchema, StartIndexJobRequest
+from app.exceptions import ConflictError, NotFoundError
+from app.models import IndexJob, Repository
+from app.models.index_job import IndexJobMode, IndexJobStatus
+from app.models.repository import RepositoryStatus
+from app.schemas.indexing import IndexJobCreate, IndexJobResponse
 
 router = APIRouter(tags=["index-jobs"])
 
 
-@router.post("/repositories/{repository_id}/index-jobs", response_model=IndexJobSchema, status_code=202)
-async def start_index_job(
+@router.post("/repositories/{repository_id}/index-jobs", response_model=IndexJobResponse, status_code=202)
+async def create_index_job(
     repository_id: uuid.UUID,
-    body: StartIndexJobRequest,
+    body: IndexJobCreate,
     current_user: UserDep,
     db: DbDep,
-) -> IndexJobSchema:
-    """
-    Queue an indexing job for the specified repository.
-
-    TODO (Phase 2): enqueue to background worker via Cloud Run job or task queue.
-    For now creates the durable job record and returns it in queued state.
-    """
-    # Verify repository ownership
-    stmt = select(Repository).where(
-        Repository.id == repository_id,
-        Repository.user_id == current_user.id,
+) -> IndexJobResponse:
+    """Enqueue an indexing job for the specified repository."""
+    # Verify repo ownership
+    repo_result = await db.execute(
+        select(Repository).where(
+            Repository.id == repository_id,
+            Repository.user_id == current_user.id,
+        )
     )
-    result = await db.execute(stmt)
-    repo = result.scalar_one_or_none()
-    if repo is None:
+    repo = repo_result.scalar_one_or_none()
+    if not repo:
         raise NotFoundError("Repository not found or not accessible.")
+
+    # Check for an already active job
+    active_result = await db.execute(
+        select(IndexJob).where(
+            IndexJob.repository_id == repository_id,
+            IndexJob.status.in_([
+                IndexJobStatus.queued,
+                IndexJobStatus.fetching,
+                IndexJobStatus.classifying,
+                IndexJobStatus.parsing,
+                IndexJobStatus.summarizing,
+                IndexJobStatus.embedding,
+                IndexJobStatus.persisting,
+            ]),
+        )
+    )
+    if active_result.scalar_one_or_none():
+        raise ConflictError("An indexing job is already active for this repository.")
 
     job = IndexJob(
         repository_id=repository_id,
         mode=body.mode,
+        status=IndexJobStatus.queued,
     )
     db.add(job)
+
+    # Mark repo as indexing
+    repo.status = RepositoryStatus.indexing
     await db.commit()
     await db.refresh(job)
 
-    return IndexJobSchema.model_validate(job)
+    return IndexJobResponse.model_validate(job)
 
 
-@router.get("/index-jobs/{job_id}", response_model=IndexJobSchema)
+@router.get("/index-jobs/{job_id}", response_model=IndexJobResponse)
 async def get_index_job(
     job_id: uuid.UUID,
     current_user: UserDep,
     db: DbDep,
-) -> IndexJobSchema:
-    """Return the current state of an indexing job."""
-    stmt = (
-        select(IndexJob)
-        .join(Repository, Repository.id == IndexJob.repository_id)
-        .where(
-            IndexJob.id == job_id,
-            Repository.user_id == current_user.id,
-        )
+) -> IndexJobResponse:
+    """Get current status and progress of an indexing job."""
+    result = await db.execute(
+        select(IndexJob, Repository)
+        .join(Repository, IndexJob.repository_id == Repository.id)
+        .where(IndexJob.id == job_id, Repository.user_id == current_user.id)
     )
-    result = await db.execute(stmt)
-    job = result.scalar_one_or_none()
-
-    if job is None:
+    row = result.first()
+    if not row:
         raise NotFoundError("Index job not found or not accessible.")
 
-    return IndexJobSchema.model_validate(job)
-
-
-@router.get("/repositories/{repository_id}/branches")
-async def list_branches(
-    repository_id: uuid.UUID,
-    current_user: UserDep,
-    db: DbDep,
-) -> dict[str, list[str]]:
-    """
-    List branches available on the connected GitHub repository.
-
-    TODO (Phase 1): fetch from GitHub API using the GitHub App client.
-    """
-    stmt = select(Repository).where(
-        Repository.id == repository_id,
-        Repository.user_id == current_user.id,
-    )
-    result = await db.execute(stmt)
-    repo = result.scalar_one_or_none()
-    if repo is None:
-        raise NotFoundError("Repository not found or not accessible.")
-
-    raise NotImplementedFeatureError(
-        "Branch listing from GitHub API is not yet implemented. "
-        "Configure GITHUB_APP credentials to enable this."
-    )
+    job, _ = row
+    return IndexJobResponse.model_validate(job)

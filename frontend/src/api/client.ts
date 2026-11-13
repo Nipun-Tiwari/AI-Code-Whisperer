@@ -20,9 +20,32 @@ apiClient.interceptors.request.use((config) => {
   return config
 })
 
+// Convert snake_case keys to camelCase in all responses
+function snakeToCamel(str: string): string {
+  return str.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+}
+
+function transformKeys(obj: unknown): unknown {
+  if (Array.isArray(obj)) return obj.map(transformKeys)
+  if (obj !== null && typeof obj === 'object') {
+    return Object.fromEntries(
+      Object.entries(obj as Record<string, unknown>).map(([k, v]) => [
+        snakeToCamel(k),
+        transformKeys(v),
+      ]),
+    )
+  }
+  return obj
+}
+
 // Map API errors to a consistent shape
 apiClient.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    if (response.data && typeof response.data === 'object') {
+      response.data = transformKeys(response.data)
+    }
+    return response
+  },
   (error: AxiosError<ApiErrorResponse>) => {
     if (error.response) {
       const apiError = error.response.data?.error

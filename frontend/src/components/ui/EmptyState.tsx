@@ -21,6 +21,8 @@ export function EmptyState({
 }: EmptyStateProps) {
   return (
     <div
+      role="status"
+      aria-label={title}
       className={clsx(
         'flex flex-col items-center justify-center text-center',
         size === 'sm' && 'py-8 px-4',
@@ -34,6 +36,7 @@ export function EmptyState({
           <Icon
             size={size === 'sm' ? 18 : 22}
             className="text-text-muted"
+            aria-hidden="true"
           />
         </div>
       )}

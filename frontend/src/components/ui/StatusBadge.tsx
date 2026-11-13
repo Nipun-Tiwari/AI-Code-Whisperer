@@ -11,6 +11,7 @@ export type StatusVariant =
   | 'unknown'
   | 'not_configured'
   | 'indexing'
+  | 'indexed'
   | 'completed'
   | 'failed'
   | 'queued'
@@ -19,6 +20,15 @@ export type StatusVariant =
   | 'active'
   | 'stale'
   | 'pending'
+  | 'fetching'
+  | 'classifying'
+  | 'parsing'
+  | 'summarizing'
+  | 'embedding'
+  | 'persisting'
+  | 'removed'
+  | 'revoked'
+  | 'expired'
 
 interface StatusConfig {
   label: string
@@ -136,6 +146,66 @@ const STATUS_CONFIG: Record<StatusVariant, StatusConfig> = {
     bgColor: 'var(--color-surface)',
     textColor: 'var(--color-text-secondary)',
   },
+  indexed: {
+    label: 'Indexed',
+    dotColor: 'var(--color-success)',
+    bgColor: 'var(--color-success-subtle)',
+    textColor: 'var(--color-success)',
+  },
+  fetching: {
+    label: 'Fetching',
+    dotColor: 'var(--color-info)',
+    bgColor: 'var(--color-info-subtle)',
+    textColor: 'var(--color-info)',
+  },
+  classifying: {
+    label: 'Classifying',
+    dotColor: 'var(--color-info)',
+    bgColor: 'var(--color-info-subtle)',
+    textColor: 'var(--color-info)',
+  },
+  parsing: {
+    label: 'Parsing',
+    dotColor: 'var(--color-info)',
+    bgColor: 'var(--color-info-subtle)',
+    textColor: 'var(--color-info)',
+  },
+  summarizing: {
+    label: 'Summarizing',
+    dotColor: 'var(--color-info)',
+    bgColor: 'var(--color-info-subtle)',
+    textColor: 'var(--color-info)',
+  },
+  embedding: {
+    label: 'Embedding',
+    dotColor: 'var(--color-info)',
+    bgColor: 'var(--color-info-subtle)',
+    textColor: 'var(--color-info)',
+  },
+  persisting: {
+    label: 'Persisting',
+    dotColor: 'var(--color-info)',
+    bgColor: 'var(--color-info-subtle)',
+    textColor: 'var(--color-info)',
+  },
+  removed: {
+    label: 'Removed',
+    dotColor: 'var(--color-text-muted)',
+    bgColor: 'var(--color-surface)',
+    textColor: 'var(--color-text-secondary)',
+  },
+  revoked: {
+    label: 'Revoked',
+    dotColor: 'var(--color-danger)',
+    bgColor: 'var(--color-danger-subtle)',
+    textColor: 'var(--color-danger)',
+  },
+  expired: {
+    label: 'Expired',
+    dotColor: 'var(--color-warning)',
+    bgColor: 'var(--color-warning-subtle)',
+    textColor: 'var(--color-warning)',
+  },
 }
 
 interface StatusBadgeProps {
@@ -148,8 +218,12 @@ interface StatusBadgeProps {
 export function StatusBadge({ status, label, size = 'md', className }: StatusBadgeProps) {
   const config = STATUS_CONFIG[status] ?? STATUS_CONFIG.unknown
 
+  const displayLabel = label ?? config.label
+
   return (
     <span
+      role="status"
+      aria-label={displayLabel}
       className={clsx(
         'inline-flex items-center gap-1.5 rounded-full font-medium whitespace-nowrap',
         size === 'sm' ? 'text-[11px] px-2 py-0.5' : 'text-xs px-2.5 py-1',
@@ -169,7 +243,7 @@ export function StatusBadge({ status, label, size = 'md', className }: StatusBad
         }}
         aria-hidden="true"
       />
-      {label ?? config.label}
+      {displayLabel}
     </span>
   )
 }

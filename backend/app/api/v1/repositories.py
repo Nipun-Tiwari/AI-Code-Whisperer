@@ -5,11 +5,14 @@ import uuid
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
+from app.auth.github_app import get_github_client
 from app.dependencies import DbDep, UserDep
 from app.exceptions import ForbiddenError, NotFoundError
-from app.models.repository import Repository
-from app.models.repository_version import RepositoryVersion
+from app.models import GitHubConnection, IndexJob, Repository, RepositoryVersion
+from app.models.index_job import IndexJobStatus
+from app.models.repository import RepositoryStatus
 from app.schemas.common import PaginatedResponse
+from app.schemas.indexing import IndexJobResponse
 from app.schemas.repository import AddRepositoryRequest, RepositorySchema, RepositoryVersionSchema
 
 router = APIRouter(prefix="/repositories", tags=["repositories"])
@@ -23,8 +26,10 @@ async def list_repositories(
     page_size: int = Query(default=20, ge=1, le=100),
     search: str | None = Query(default=None),
 ) -> PaginatedResponse[RepositorySchema]:
-    """List repositories accessible to the authenticated user."""
-    stmt = select(Repository).where(Repository.user_id == current_user.id)
+    stmt = select(Repository).where(
+        Repository.user_id == current_user.id,
+        Repository.status != RepositoryStatus.removed,
+    )
     if search:
         pattern = f"%{search}%"
         stmt = stmt.where(
@@ -32,41 +37,27 @@ async def list_repositories(
         )
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
-    total_result = await db.execute(count_stmt)
-    total = total_result.scalar_one()
+    total = (await db.execute(count_stmt)).scalar_one()
 
-    stmt = stmt.offset((page - 1) * page_size).limit(page_size)
-    result = await db.execute(stmt)
-    repos = result.scalars().all()
+    stmt = stmt.order_by(Repository.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    repos = (await db.execute(stmt)).scalars().all()
 
-    # Attach latest version to each repo
     repo_schemas: list[RepositorySchema] = []
     for repo in repos:
         version_stmt = (
             select(RepositoryVersion)
-            .where(
-                RepositoryVersion.repository_id == repo.id,
-                RepositoryVersion.branch == repo.selected_branch,
-            )
+            .where(RepositoryVersion.repository_id == repo.id, RepositoryVersion.branch == repo.selected_branch)
             .order_by(RepositoryVersion.index_version.desc())
             .limit(1)
         )
-        version_result = await db.execute(version_stmt)
-        latest_version = version_result.scalar_one_or_none()
-
+        latest_version = (await db.execute(version_stmt)).scalar_one_or_none()
         schema = RepositorySchema.model_validate(repo)
         if latest_version:
             schema.latest_version = RepositoryVersionSchema.model_validate(latest_version)
         schema.full_name = f"{repo.owner}/{repo.name}"
         repo_schemas.append(schema)
 
-    return PaginatedResponse(
-        items=repo_schemas,
-        total=total,
-        page=page,
-        page_size=page_size,
-        has_more=(page * page_size) < total,
-    )
+    return PaginatedResponse(items=repo_schemas, total=total, page=page, page_size=page_size, has_more=(page * page_size) < total)
 
 
 @router.post("", response_model=RepositorySchema, status_code=201)
@@ -75,19 +66,39 @@ async def add_repository(
     current_user: UserDep,
     db: DbDep,
 ) -> RepositorySchema:
-    """
-    Register a GitHub repository for indexing.
+    """Register an authorized GitHub repository for indexing."""
+    # Validate the GitHub connection belongs to this user
+    conn_result = await db.execute(
+        select(GitHubConnection).where(
+            GitHubConnection.id == body.github_connection_id,
+            GitHubConnection.user_id == current_user.id,
+        )
+    )
+    conn = conn_result.scalar_one_or_none()
+    if not conn:
+        raise ForbiddenError("GitHub connection not found or not accessible.")
 
-    TODO: validate the repository against the GitHub API using the GitHub connection.
-    """
+    # Validate repo access via GitHub API
+    github_repo_id = ""
+    default_branch = body.branch
+    try:
+        github = get_github_client()
+        if conn.access_token:
+            info = await github.get_repo_info(body.owner, body.name, conn.access_token)
+            github_repo_id = str(info.get("id", ""))
+            default_branch = info.get("default_branch", body.branch)
+    except Exception:
+        pass  # Proceed even if validation fails — will be caught during indexing
+
     repo = Repository(
         user_id=current_user.id,
         github_connection_id=body.github_connection_id,
         owner=body.owner,
         name=body.name,
-        github_repo_id="",  # TODO: fetch from GitHub API
-        default_branch=body.branch,
+        github_repo_id=github_repo_id,
+        default_branch=default_branch,
         selected_branch=body.branch,
+        status=RepositoryStatus.pending,
     )
     db.add(repo)
     await db.commit()
@@ -104,28 +115,15 @@ async def get_repository(
     current_user: UserDep,
     db: DbDep,
 ) -> RepositorySchema:
-    """Get repository details for the authenticated user."""
-    stmt = select(Repository).where(
-        Repository.id == repository_id,
-        Repository.user_id == current_user.id,
-    )
-    result = await db.execute(stmt)
-    repo = result.scalar_one_or_none()
-
-    if repo is None:
-        raise NotFoundError("Repository not found or not accessible.")
+    repo = await _get_user_repo(repository_id, current_user.id, db)
 
     version_stmt = (
         select(RepositoryVersion)
-        .where(
-            RepositoryVersion.repository_id == repo.id,
-            RepositoryVersion.branch == repo.selected_branch,
-        )
+        .where(RepositoryVersion.repository_id == repo.id, RepositoryVersion.branch == repo.selected_branch)
         .order_by(RepositoryVersion.index_version.desc())
         .limit(1)
     )
-    version_result = await db.execute(version_stmt)
-    latest_version = version_result.scalar_one_or_none()
+    latest_version = (await db.execute(version_stmt)).scalar_one_or_none()
 
     schema = RepositorySchema.model_validate(repo)
     if latest_version:
@@ -140,20 +138,74 @@ async def remove_repository(
     current_user: UserDep,
     db: DbDep,
 ) -> None:
-    """
-    Remove a repository and schedule deletion of associated indexed data.
+    repo = await _get_user_repo(repository_id, current_user.id, db)
 
-    TODO: enqueue a background job to delete vectors, chunks, summaries and job records.
-    """
-    stmt = select(Repository).where(
-        Repository.id == repository_id,
-        Repository.user_id == current_user.id,
-    )
-    result = await db.execute(stmt)
-    repo = result.scalar_one_or_none()
-
-    if repo is None:
-        raise NotFoundError("Repository not found or not accessible.")
-
-    await db.delete(repo)
+    # Soft-delete: mark as removed (actual vector deletion is async)
+    repo.status = RepositoryStatus.removed
     await db.commit()
+
+    # Schedule vector cleanup in background
+    import asyncio
+    from app.indexing.vector_store import get_vector_store
+    asyncio.create_task(_cleanup_vectors(str(repository_id)))
+
+
+@router.get("/{repository_id}/branches")
+async def list_branches(
+    repository_id: uuid.UUID,
+    current_user: UserDep,
+    db: DbDep,
+) -> list[str]:
+    repo = await _get_user_repo(repository_id, current_user.id, db)
+
+    conn_result = await db.execute(
+        select(GitHubConnection).where(GitHubConnection.id == repo.github_connection_id)
+    )
+    conn = conn_result.scalar_one_or_none()
+    if not conn or not conn.access_token:
+        return [repo.default_branch]
+
+    try:
+        github = get_github_client()
+        branches = await github.list_branches(repo.owner, repo.name, conn.access_token)
+        return branches
+    except Exception:
+        return [repo.default_branch]
+
+
+@router.get("/{repository_id}/index-jobs", response_model=list[IndexJobResponse])
+async def list_index_jobs(
+    repository_id: uuid.UUID,
+    current_user: UserDep,
+    db: DbDep,
+) -> list[IndexJobResponse]:
+    repo = await _get_user_repo(repository_id, current_user.id, db)
+    result = await db.execute(
+        select(IndexJob)
+        .where(IndexJob.repository_id == repo.id)
+        .order_by(IndexJob.created_at.desc())
+        .limit(20)
+    )
+    jobs = result.scalars().all()
+    return [IndexJobResponse.model_validate(j) for j in jobs]
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+async def _get_user_repo(repo_id: uuid.UUID, user_id: uuid.UUID, db: DbDep) -> Repository:  # type: ignore[type-arg]
+    result = await db.execute(
+        select(Repository).where(Repository.id == repo_id, Repository.user_id == user_id)
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        raise NotFoundError("Repository not found or not accessible.")
+    return repo
+
+
+async def _cleanup_vectors(repository_id: str) -> None:
+    from app.indexing.vector_store import get_vector_store
+    try:
+        vs = get_vector_store()
+        await vs.delete_by_repository(repository_id)
+    except Exception:
+        pass

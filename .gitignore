@@ -49,3 +49,8 @@ Thumbs.db
 # ── Private key files (belt-and-suspenders) ───────────────────────────────────
 *.private-key.pem
 codewhispererrepo*.pem
+
+# ── Phase 4 artifacts ─────────────────────────────────────────────────────────
+backend/app/evaluation/results/
+*.eval.json
+backend/uvicorn.log
