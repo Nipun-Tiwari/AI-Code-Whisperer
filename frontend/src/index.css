@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Canvas / surface colors */
+  --color-canvas: #ffffff;
+  --color-surface: #f8f9fa;
+  --color-surface-elevated: #ffffff;
+
+  /* Text colors */
+  --color-text-primary: #1a1d23;
+  --color-text-secondary: #6b7280;
+  --color-text-muted: #9ca3af;
+
+  /* Border colors */
+  --color-border: #e5e7eb;
+  --color-border-subtle: #f3f4f6;
+
+  /* Accent colors */
+  --color-accent: #2563eb;
+  --color-accent-hover: #1d4ed8;
+  --color-accent-subtle: #eff6ff;
+
+  /* Status: success */
+  --color-success: #16a34a;
+  --color-success-subtle: #f0fdf4;
+
+  /* Status: warning */
+  --color-warning: #d97706;
+  --color-warning-subtle: #fffbeb;
+
+  /* Status: danger */
+  --color-danger: #dc2626;
+  --color-danger-subtle: #fef2f2;
+
+  /* Status: info */
+  --color-info: #0891b2;
+  --color-info-subtle: #ecfeff;
+
+  /* Typography */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+
+  /* Border radius */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Layout */
+  --sidebar-width: 220px;
+  --sidebar-collapsed-width: 48px;
+  --header-height: 48px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background-color: var(--color-canvas);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Focus ring for accessibility */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* Sidebar transition */
+.sidebar-transition {
+  transition: width 200ms ease-in-out;
+}
+
+/* Skeleton animation */
+@keyframes skeleton-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+.skeleton-animate {
+  animation: skeleton-pulse 1.5s ease-in-out infinite;
+}
