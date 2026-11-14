@@ -1,6 +1,7 @@
 from .base import Base
 from .user import User
 from .github_connection import GitHubConnection, GitHubConnectionStatus
+from .github_install_state import GitHubInstallState
 from .repository import Repository, RepositoryStatus, RepositoryVisibility
 from .repository_version import RepositoryVersion
 from .index_job import IndexJob, IndexJobMode, IndexJobStatus
@@ -20,6 +21,7 @@ __all__ = [
     "User",
     "GitHubConnection",
     "GitHubConnectionStatus",
+    "GitHubInstallState",
     "Repository",
     "RepositoryStatus",
     "RepositoryVisibility",

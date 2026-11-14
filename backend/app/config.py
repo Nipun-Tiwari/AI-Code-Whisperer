@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     github_app_name: str = ""
     github_app_client_id: str = ""
     github_app_client_secret: str = ""
+    github_app_callback_url: str = ""
     github_app_private_key: str = ""
     github_app_webhook_secret: str = ""
 

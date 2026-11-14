@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
 from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 
 from app.auth.github_app import get_github_client
 from app.dependencies import DbDep, UserDep
-from app.exceptions import ForbiddenError, NotFoundError
+from app.exceptions import ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.models import GitHubConnection, IndexJob, Repository, RepositoryVersion
 from app.models.index_job import IndexJobStatus
 from app.models.repository import RepositoryStatus
@@ -78,17 +79,32 @@ async def add_repository(
     if not conn:
         raise ForbiddenError("GitHub connection not found or not accessible.")
 
-    # Validate repo access via GitHub API
-    github_repo_id = ""
-    default_branch = body.branch
+    if not conn.github_app_installation_id:
+        raise ForbiddenError("GitHub App installation is missing.")
+
+    github = get_github_client()
     try:
-        github = get_github_client()
-        if conn.access_token:
-            info = await github.get_repo_info(body.owner, body.name, conn.access_token)
-            github_repo_id = str(info.get("id", ""))
-            default_branch = info.get("default_branch", body.branch)
-    except Exception:
-        pass  # Proceed even if validation fails — will be caught during indexing
+        installation_token = await github.get_installation_token(
+            int(conn.github_app_installation_id)
+        )
+        info = await github.get_repo_info(body.owner, body.name, installation_token)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in {401, 403, 404}:
+            raise ForbiddenError(
+                "Repository is not accessible through this GitHub App installation."
+            ) from exc
+        raise ServiceUnavailableError(
+            "Unable to validate repository access with GitHub.",
+            service="github",
+        ) from exc
+    except httpx.RequestError as exc:
+        raise ServiceUnavailableError(
+            "Unable to reach GitHub to validate repository access.",
+            service="github",
+        ) from exc
+
+    github_repo_id = str(info.get("id", ""))
+    default_branch = info.get("default_branch", body.branch)
 
     repo = Repository(
         user_id=current_user.id,
@@ -162,15 +178,24 @@ async def list_branches(
         select(GitHubConnection).where(GitHubConnection.id == repo.github_connection_id)
     )
     conn = conn_result.scalar_one_or_none()
-    if not conn or not conn.access_token:
+    if not conn or not conn.github_app_installation_id:
         return [repo.default_branch]
 
+    github = get_github_client()
     try:
-        github = get_github_client()
-        branches = await github.list_branches(repo.owner, repo.name, conn.access_token)
-        return branches
-    except Exception:
-        return [repo.default_branch]
+        installation_token = await github.get_installation_token(
+            int(conn.github_app_installation_id)
+        )
+        return await github.list_branches(
+            repo.owner,
+            repo.name,
+            installation_token,
+        )
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ServiceUnavailableError(
+            "Unable to load branches from GitHub.",
+            service="github",
+        ) from exc
 
 
 @router.get("/{repository_id}/index-jobs", response_model=list[IndexJobResponse])

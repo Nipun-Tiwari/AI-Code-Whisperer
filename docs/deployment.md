@@ -207,13 +207,19 @@ gcloud run jobs execute codewhisperer-migrate --region=us-central1 --wait
 
 > Use `DATABASE_URL` (direct, not pooled) for migrations.
 
-### 4.2 Update GitHub App callback URL
+### 4.2 Configure GitHub App URLs
 
-Go to **github.com/settings/apps/CodeWhispererRepo** → **General** → add your Cloud Run URL as a callback:
+In **github.com/settings/apps/CodeWhispererRepo** → **General**, set both the GitHub App
+**Callback URL** and **Setup URL** to the API callback endpoint:
 
 ```
 https://codewhisperer-api-xxxx-uc.a.run.app/api/v1/integrations/github/callback
 ```
+
+Set `GITHUB_APP_CALLBACK_URL` in the API service to this exact public URL. The callback
+handles GitHub's installation setup redirect first, then the OAuth authorization callback
+used to verify the installation belongs to the authorizing GitHub user. Do not enable
+**Redirect on update** unless a separate stateful update flow is implemented.
 
 ---
 

@@ -1,8 +1,9 @@
-import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Plus, RefreshCw, Trash2, ExternalLink, GitBranch } from 'lucide-react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { PageHeader, DataTable, StatusBadge, ConfirmationDialog } from '@/components'
+import { GitHubConnectButton } from '@/components/integrations/GitHubConnectButton'
 import {
   listRepositories,
   listGitHubConnections,
@@ -21,6 +22,31 @@ export default function RepositoriesPage() {
   const queryClient = useQueryClient()
   const [showAddModal, setShowAddModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<Repository | null>(null)
+  const [githubError, setGithubError] = useState<string | null>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  useEffect(() => {
+    const result = searchParams.get('github')
+    if (!result) return
+
+    if (result === 'connected') {
+      setShowAddModal(true)
+      queryClient.invalidateQueries({ queryKey: ['github-connections'] })
+      queryClient.invalidateQueries({ queryKey: ['accessible-repos'] })
+    } else if (result === 'error') {
+      const reason = searchParams.get('reason')
+      setGithubError(
+        reason === 'authorization_denied'
+          ? 'GitHub authorization was cancelled.'
+          : 'Unable to connect GitHub. Please try again.',
+      )
+    }
+
+    const cleanedParams = new URLSearchParams(searchParams)
+    cleanedParams.delete('github')
+    cleanedParams.delete('reason')
+    setSearchParams(cleanedParams, { replace: true })
+  }, [queryClient, searchParams, setSearchParams])
 
   const hasActive = (repos: Repository[]) =>
     repos.some((r) => ACTIVE_STATUSES.has(r.status))
@@ -142,6 +168,12 @@ export default function RepositoriesPage() {
         }
       />
 
+      {githubError && (
+        <p className="text-sm text-danger" role="alert">
+          {githubError}
+        </p>
+      )}
+
       <DataTable
         columns={columns}
         data={repos}
@@ -197,12 +229,22 @@ function AddRepositoryModal({
   const [selectedRepo, setSelectedRepo] = useState<GitHubRepo | null>(null)
   const [branch, setBranch] = useState('')
 
-  const { data: connections } = useQuery({
+  const {
+    data: connections,
+    isLoading: loadingConnections,
+    error: connectionsError,
+    refetch: refetchConnections,
+  } = useQuery({
     queryKey: ['github-connections'],
     queryFn: listGitHubConnections,
   })
 
-  const { data: accessibleRepos, isLoading: loadingRepos } = useQuery({
+  const {
+    data: accessibleRepos,
+    isLoading: loadingRepos,
+    error: accessibleReposError,
+    refetch: refetchAccessibleRepos,
+  } = useQuery({
     queryKey: ['accessible-repos'],
     queryFn: listAccessibleRepos,
     enabled: (connections?.length ?? 0) > 0,
@@ -232,21 +274,67 @@ function AddRepositoryModal({
         </div>
 
         <div className="p-4 space-y-4">
-          {!hasConnections ? (
+          {loadingConnections ? (
+            <p className="text-sm text-text-secondary text-center py-4">
+              Checking GitHub connection…
+            </p>
+          ) : connectionsError ? (
+            <div className="text-center py-6 space-y-3">
+              <p className="text-sm text-danger" role="alert">
+                Unable to load your GitHub connections.
+              </p>
+              <button
+                onClick={() => refetchConnections()}
+                className="text-sm text-accent hover:underline"
+              >
+                Try again
+              </button>
+            </div>
+          ) : !hasConnections ? (
             <div className="text-center py-6 space-y-3">
               <p className="text-sm text-text-secondary">
                 Connect your GitHub account to browse and add repositories.
               </p>
-              <a
-                href={`${import.meta.env.VITE_API_URL ?? ''}/api/v1/integrations/github/connect`}
+              <GitHubConnectButton
                 className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors"
               >
                 <ExternalLink size={14} />
                 Connect GitHub
-              </a>
+              </GitHubConnectButton>
             </div>
           ) : loadingRepos ? (
             <p className="text-sm text-text-secondary text-center py-4">Loading repositories…</p>
+          ) : accessibleReposError ? (
+            <div className="text-center py-6 space-y-3">
+              <p className="text-sm text-danger" role="alert">
+                Unable to load repositories from GitHub.
+              </p>
+              <button
+                onClick={() => refetchAccessibleRepos()}
+                className="text-sm text-accent hover:underline"
+              >
+                Try again
+              </button>
+              <GitHubConnectButton
+                className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors"
+              >
+                <ExternalLink size={14} />
+                Reconnect GitHub
+              </GitHubConnectButton>
+            </div>
+          ) : (accessibleRepos?.length ?? 0) === 0 ? (
+            <div className="text-center py-6 space-y-3">
+              <p className="text-sm text-text-secondary">
+                No repositories are available to this GitHub App installation. Update its
+                repository access in GitHub settings, then reconnect.
+              </p>
+              <GitHubConnectButton
+                className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors"
+              >
+                <ExternalLink size={14} />
+                Update GitHub Access
+              </GitHubConnectButton>
+            </div>
           ) : (
             <>
               <div className="max-h-64 overflow-y-auto space-y-1 border border-border rounded-md p-2">

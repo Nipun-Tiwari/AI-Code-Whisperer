@@ -30,11 +30,14 @@ Authorization: Bearer <supabase-access-token>
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/api/v1/integrations/github/install-url` | None | Get GitHub App install URL |
-| POST | `/api/v1/integrations/github/connect` | Required | Start authorization flow (Phase 1 TODO) |
-| GET | `/api/v1/integrations/github/callback` | None | Handle callback (Phase 1 TODO) |
+| POST | `/api/v1/integrations/github/connect` | Required | Start GitHub App installation and return its URL |
+| GET | `/api/v1/integrations/github/callback` | None | Handle GitHub installation setup and OAuth callbacks |
 | GET | `/api/v1/integrations/github` | Required | List connections |
-| DELETE | `/api/v1/integrations/github/{connection_id}` | Required | Disconnect (Phase 1 TODO) |
+| GET | `/api/v1/integrations/github/repositories` | Required | List repositories accessible to connected installations |
+| DELETE | `/api/v1/integrations/github/{connection_id}` | Required | Disconnect |
+
+After GitHub returns, the application opens Add Repository. Users explicitly choose which
+repositories to register; installing the GitHub App alone does not register or index them.
 
 ### Repositories
 

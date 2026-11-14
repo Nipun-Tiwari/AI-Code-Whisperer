@@ -177,16 +177,26 @@ class GitHubAppClient:
                 page += 1
         return results
 
-    async def exchange_code_for_token(self, code: str) -> dict[str, Any]:
+    async def exchange_code_for_token(
+        self,
+        code: str,
+        code_verifier: str | None = None,
+        redirect_uri: str | None = None,
+    ) -> dict[str, Any]:
         """Exchange OAuth code for user access token."""
+        payload = {
+            "client_id": self._settings.github_app_client_id,
+            "client_secret": self._settings.github_app_client_secret,
+            "code": code,
+        }
+        if code_verifier:
+            payload["code_verifier"] = code_verifier
+        if redirect_uri:
+            payload["redirect_uri"] = redirect_uri
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.post(
                 "https://github.com/login/oauth/access_token",
-                json={
-                    "client_id": self._settings.github_app_client_id,
-                    "client_secret": self._settings.github_app_client_secret,
-                    "code": code,
-                },
+                data=payload,
                 headers={"Accept": "application/json"},
             )
             resp.raise_for_status()

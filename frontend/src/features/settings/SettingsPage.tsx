@@ -1,5 +1,6 @@
 import { Settings, Github, User, Trash2, Sun, Moon, Monitor, CheckCircle2, Circle } from 'lucide-react'
 import { PageHeader, StatusBadge } from '@/components'
+import { GitHubConnectButton } from '@/components/integrations/GitHubConnectButton'
 import { useAuthStore, useThemeStore } from '@/store'
 import type { ThemePreference } from '@/store'
 import { clsx } from 'clsx'
@@ -56,8 +57,7 @@ export function SettingsPage() {
                 </div>
                 <StatusBadge status="not_configured" size="sm" />
               </div>
-              <a
-                href={`${import.meta.env.VITE_API_URL ?? ''}/api/v1/integrations/github/connect`}
+              <GitHubConnectButton
                 className={clsx(
                   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium',
                   'border border-border text-text-secondary hover:bg-surface transition-colors',
@@ -65,7 +65,7 @@ export function SettingsPage() {
               >
                 <Github size={13} />
                 Install GitHub App
-              </a>
+              </GitHubConnectButton>
             </div>
           </section>
 

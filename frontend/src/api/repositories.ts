@@ -107,6 +107,13 @@ export async function listGitHubConnections(): Promise<GitHubConnection[]> {
   return data
 }
 
+export async function startGitHubConnection(): Promise<string> {
+  const { data } = await apiClient.post<{ installUrl: string }>(
+    '/api/v1/integrations/github/connect',
+  )
+  return data.installUrl
+}
+
 export async function listAccessibleRepos(): Promise<GitHubRepo[]> {
   const { data } = await apiClient.get<GitHubRepo[]>('/api/v1/integrations/github/repositories')
   return data
