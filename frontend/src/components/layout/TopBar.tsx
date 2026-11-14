@@ -1,7 +1,8 @@
 import { ChevronRight, LogOut, Settings, Sun, Moon, Monitor, Menu } from 'lucide-react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { useLocation, Link } from 'react-router-dom'
+import { useLocation, Link, useNavigate } from 'react-router-dom'
 import { useAuthStore, useThemeStore, useSidebarStore } from '@/store'
+import { supabase } from '@/lib/supabase'
 import type { ThemePreference } from '@/store'
 import { clsx } from 'clsx'
 
@@ -98,6 +99,7 @@ function ThemeToggle() {
 
 export function TopBar() {
   const location = useLocation()
+  const navigate = useNavigate()
   const { user } = useAuthStore()
   const { setCollapsed } = useSidebarStore()
   const breadcrumbs = getBreadcrumbs(location.pathname)
@@ -197,8 +199,9 @@ export function TopBar() {
               <DropdownMenu.Separator className="h-px bg-border my-1" />
               <DropdownMenu.Item
                 className="flex items-center gap-2 px-3 py-1.5 text-danger hover:bg-danger-subtle cursor-pointer outline-none transition-colors"
-                onSelect={() => {
-                  // TODO: implement sign-out via Supabase client
+                onSelect={async () => {
+                  await supabase.auth.signOut()
+                  navigate('/login')
                 }}
               >
                 <LogOut size={13} />
