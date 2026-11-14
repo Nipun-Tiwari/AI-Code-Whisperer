@@ -56,19 +56,16 @@ export function SettingsPage() {
                 </div>
                 <StatusBadge status="not_configured" size="sm" />
               </div>
-              <button
+              <a
+                href={`${import.meta.env.VITE_API_URL ?? ''}/api/v1/integrations/github/connect`}
                 className={clsx(
                   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium',
                   'border border-border text-text-secondary hover:bg-surface transition-colors',
                 )}
-                onClick={() => {
-                  // TODO: initiate GitHub App installation flow
-                  // GET /api/v1/integrations/github/connect
-                }}
               >
                 <Github size={13} />
                 Install GitHub App
-              </button>
+              </a>
             </div>
           </section>
 

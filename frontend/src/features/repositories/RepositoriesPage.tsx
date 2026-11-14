@@ -238,7 +238,7 @@ function AddRepositoryModal({
                 Connect your GitHub account to browse and add repositories.
               </p>
               <a
-                href="/api/v1/integrations/github/connect"
+                href={`${import.meta.env.VITE_API_URL ?? ''}/api/v1/integrations/github/connect`}
                 className="inline-flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors"
               >
                 <ExternalLink size={14} />
