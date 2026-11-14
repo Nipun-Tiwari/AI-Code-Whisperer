@@ -21,11 +21,11 @@ export interface GitHubRepo {
   id: string
   owner: string
   name: string
-  full_name: string
+  fullName: string
   visibility: string
-  default_branch: string
+  defaultBranch: string
   description: string | null
-  github_connection_id: string
+  githubConnectionId: string
 }
 
 export interface ChatQueryRequest {

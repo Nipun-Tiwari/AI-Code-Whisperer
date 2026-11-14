@@ -255,8 +255,8 @@ function AddRepositoryModal({
       addRepository({
         owner: selectedRepo!.owner,
         name: selectedRepo!.name,
-        branch: branch || selectedRepo!.default_branch,
-        github_connection_id: selectedRepo!.github_connection_id,
+        branch: branch || selectedRepo!.defaultBranch,
+        github_connection_id: selectedRepo!.githubConnectionId,
       }),
     onSuccess: onAdded,
   })
@@ -343,7 +343,7 @@ function AddRepositoryModal({
                     key={repo.id}
                     onClick={() => {
                       setSelectedRepo(repo)
-                      setBranch(repo.default_branch)
+                      setBranch(repo.defaultBranch)
                     }}
                     className={clsx(
                       'w-full text-left px-3 py-2 rounded text-sm transition-colors',
@@ -352,7 +352,7 @@ function AddRepositoryModal({
                         : 'hover:bg-surface text-text-primary',
                     )}
                   >
-                    <span className="font-medium">{repo.full_name}</span>
+                    <span className="font-medium">{repo.fullName}</span>
                     <span className="ml-2 text-xs text-text-muted capitalize">{repo.visibility}</span>
                   </button>
                 ))}
