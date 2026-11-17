@@ -16,7 +16,9 @@ import {
 import type { Repository } from '@/types'
 import { clsx } from 'clsx'
 
-const ACTIVE_STATUSES = new Set(['queued', 'fetching', 'classifying', 'parsing', 'summarizing', 'embedding', 'persisting'])
+// Job-stage statuses plus the repository-level 'indexing' status — a repo sits
+// in 'indexing' for the lifetime of its active job, so both need to count as active.
+const ACTIVE_STATUSES = new Set(['indexing', 'queued', 'fetching', 'classifying', 'parsing', 'summarizing', 'embedding', 'persisting'])
 
 export default function RepositoriesPage() {
   const queryClient = useQueryClient()

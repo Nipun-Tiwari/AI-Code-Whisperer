@@ -6,7 +6,16 @@ import { getRepository, listRepositoryJobs, startIndexJob } from '@/api/reposito
 import type { IndexJob } from '@/types'
 import { clsx } from 'clsx'
 
-const ACTIVE_STATUSES = new Set(['queued', 'fetching', 'classifying', 'parsing', 'summarizing', 'embedding', 'persisting'])
+// Job-stage statuses plus the repository-level 'indexing' status — a repo sits
+// in 'indexing' for the lifetime of its active job, so both need to count as active.
+const ACTIVE_STATUSES = new Set(['indexing', 'queued', 'fetching', 'classifying', 'parsing', 'summarizing', 'embedding', 'persisting'])
+
+function formatErrorCategory(category: string): string {
+  return category
+    .split('_')
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
 
 export default function RepositoryDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -131,6 +140,14 @@ export default function RepositoryDetailPage() {
                   <span className="text-xs text-text-secondary capitalize">{job.mode}</span>
                   {job.stage && (
                     <span className="text-xs text-text-muted">— {job.stage}</span>
+                  )}
+                  {job.errorCategory && (
+                    <span
+                      className="text-xs text-danger"
+                      title={`error_category: ${job.errorCategory}`}
+                    >
+                      {formatErrorCategory(job.errorCategory)}
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-4 text-xs text-text-muted">

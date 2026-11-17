@@ -1,6 +1,8 @@
 import { Settings, Github, User, Trash2, Sun, Moon, Monitor, CheckCircle2, Circle } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { PageHeader, StatusBadge } from '@/components'
 import { GitHubConnectButton } from '@/components/integrations/GitHubConnectButton'
+import { listGitHubConnections } from '@/api/repositories'
 import { useAuthStore, useThemeStore } from '@/store'
 import type { ThemePreference } from '@/store'
 import { clsx } from 'clsx'
@@ -14,6 +16,11 @@ const THEME_OPTIONS: { value: ThemePreference; label: string; description: strin
 export function SettingsPage() {
   const { user } = useAuthStore()
   const { preference, setPreference } = useThemeStore()
+  const { data: connections, isLoading: loadingConnections } = useQuery({
+    queryKey: ['github-connections'],
+    queryFn: listGitHubConnections,
+  })
+  const hasConnections = (connections?.length ?? 0) > 0
 
   return (
     <div className="flex flex-col h-full">
@@ -47,16 +54,31 @@ export function SettingsPage() {
               <h2 className="text-sm font-semibold text-text-primary">GitHub Connection</h2>
             </div>
             <div className="p-4 space-y-3">
-              {/* TODO: show connected GitHub App installations */}
-              <div className="flex items-center gap-3 py-2">
-                <div className="flex-1">
-                  <p className="text-sm text-text-secondary">No GitHub App installed</p>
-                  <p className="text-xs text-text-muted mt-0.5">
-                    Connect a GitHub App installation to access your repositories.
-                  </p>
+              {loadingConnections ? (
+                <p className="text-sm text-text-secondary py-2">Checking GitHub connection…</p>
+              ) : hasConnections ? (
+                (connections ?? []).map((conn) => (
+                  <div key={conn.id} className="flex items-center gap-3 py-2">
+                    <div className="flex-1">
+                      <p className="text-sm text-text-primary">{conn.github_account_login}</p>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        {conn.github_account_type} · Installation {conn.installation_id ?? '—'}
+                      </p>
+                    </div>
+                    <StatusBadge status={conn.status === 'active' ? 'active' : 'not_configured'} size="sm" />
+                  </div>
+                ))
+              ) : (
+                <div className="flex items-center gap-3 py-2">
+                  <div className="flex-1">
+                    <p className="text-sm text-text-secondary">No GitHub App installed</p>
+                    <p className="text-xs text-text-muted mt-0.5">
+                      Connect a GitHub App installation to access your repositories.
+                    </p>
+                  </div>
+                  <StatusBadge status="not_configured" size="sm" />
                 </div>
-                <StatusBadge status="not_configured" size="sm" />
-              </div>
+              )}
               <GitHubConnectButton
                 className={clsx(
                   'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium',
@@ -64,7 +86,7 @@ export function SettingsPage() {
                 )}
               >
                 <Github size={13} />
-                Install GitHub App
+                {hasConnections ? 'Connect Another Account' : 'Install GitHub App'}
               </GitHubConnectButton>
             </div>
           </section>

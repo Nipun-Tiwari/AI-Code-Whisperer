@@ -6,6 +6,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 
+import httpx
 import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +29,7 @@ from app.models import (
     CodeChunk,
     EmbeddingRecord,
     FileRecord,
+    GitHubConnection,
     IndexJob,
     IndexJobStatus,
     ParseStatus,
@@ -36,6 +38,7 @@ from app.models import (
     SymbolKind,
     SymbolRecord,
 )
+from app.models.repository import RepositoryStatus
 from app.retrieval.lexical import ChunkRecord, get_lexical_index, invalidate_index
 
 logger = structlog.get_logger(__name__)
@@ -95,22 +98,46 @@ class IndexingPipeline:
         job.stage = "fetching"
         await db.commit()
 
-        # Get installation token
-        try:
-            install_id = int(repo.github_connection_id)  # type: ignore
-        except (ValueError, TypeError):
-            # Load from github_connection
-            from app.models import GitHubConnection
-            conn_result = await db.execute(
-                select(GitHubConnection).where(GitHubConnection.id == repo.github_connection_id)
-            )
-            conn = conn_result.scalar_one_or_none()
-            if not conn or not conn.github_app_installation_id:
-                await self._update_job(db, IndexJobStatus.failed, error_category="no_installation")
-                return
-            install_id = int(conn.github_app_installation_id)
+        # Resolve the GitHub App installation for this repository's connection.
+        # NOTE: repo.github_connection_id is a UUID FK into github_connections,
+        # never a GitHub installation ID — it must never be cast with int().
+        conn_result = await db.execute(
+            select(GitHubConnection).where(GitHubConnection.id == repo.github_connection_id)
+        )
+        conn = conn_result.scalar_one_or_none()
+        if not conn or not conn.github_app_installation_id:
+            await self._update_job(db, IndexJobStatus.failed, error_category="no_installation")
+            return
 
-        install_token = await self._github.get_installation_token(install_id)
+        try:
+            install_id = int(conn.github_app_installation_id)
+        except (TypeError, ValueError):
+            await self._update_job(db, IndexJobStatus.failed, error_category="invalid_installation")
+            return
+
+        try:
+            install_token = await self._github.get_installation_token(install_id)
+        except httpx.HTTPStatusError as exc:
+            logger.error(
+                "GitHub installation token request failed",
+                job_id=self._job_id,
+                installation_id=install_id,
+                status_code=exc.response.status_code,
+            )
+            category = (
+                "invalid_installation" if exc.response.status_code == 404 else "github_auth_failed"
+            )
+            await self._update_job(db, IndexJobStatus.failed, error_category=category)
+            return
+        except httpx.RequestError as exc:
+            logger.error(
+                "GitHub installation token request errored",
+                job_id=self._job_id,
+                error=str(exc),
+            )
+            await self._update_job(db, IndexJobStatus.failed, error_category="github_auth_failed")
+            return
+
         branch = repo.selected_branch
 
         # ── Stage 1: Fetch repository tree ────────────────────────────────────
@@ -406,6 +433,8 @@ class IndexingPipeline:
         job.stage = None
         job.completed_at = datetime.now(timezone.utc)
         job.files_processed = processed
+        # A completed or partial job means the repository now has a usable index.
+        repo.status = RepositoryStatus.indexed
         await db.commit()
 
         logger.info(
@@ -434,7 +463,28 @@ class IndexingPipeline:
             if error_category:
                 job.error_category = error_category
             job.completed_at = datetime.now(timezone.utc)
+            await self._sync_repository_status(db, job.repository_id, status)
             await db.commit()
+
+    async def _sync_repository_status(
+        self, db: AsyncSession, repository_id: uuid.UUID, job_status: IndexJobStatus
+    ) -> None:
+        """Keep Repository.status aligned with a job's terminal status.
+
+        Without this, a repository stays stuck on "indexing" forever once its
+        index job fails, is paused, or (via a separate code path) completes.
+        """
+        repo_result = await db.execute(
+            select(Repository).where(Repository.id == repository_id)
+        )
+        repo = repo_result.scalar_one_or_none()
+        if not repo:
+            return
+        if job_status in (IndexJobStatus.completed, IndexJobStatus.partial):
+            repo.status = RepositoryStatus.indexed
+        elif job_status == IndexJobStatus.failed:
+            repo.status = RepositoryStatus.failed
+        # paused: leave repo.status as indexing — the job is resumable.
 
     async def _fetch_tree_with_retry(
         self, owner: str, repo: str, ref: str, token: str

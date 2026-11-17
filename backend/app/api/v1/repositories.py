@@ -10,7 +10,7 @@ from app.auth.github_app import get_github_client
 from app.dependencies import DbDep, UserDep
 from app.exceptions import ForbiddenError, NotFoundError, ServiceUnavailableError
 from app.models import GitHubConnection, IndexJob, Repository, RepositoryVersion
-from app.models.index_job import IndexJobStatus
+from app.models.index_job import IndexJobMode, IndexJobStatus
 from app.models.repository import RepositoryStatus
 from app.schemas.common import PaginatedResponse
 from app.schemas.indexing import IndexJobResponse
@@ -117,6 +117,18 @@ async def add_repository(
         status=RepositoryStatus.pending,
     )
     db.add(repo)
+    await db.flush()  # assign repo.id for the index job FK below
+
+    # Auto-start indexing so the user doesn't have to click "Start Indexing"
+    # immediately after adding a repository.
+    job = IndexJob(
+        repository_id=repo.id,
+        mode=IndexJobMode.full,
+        status=IndexJobStatus.queued,
+    )
+    db.add(job)
+    repo.status = RepositoryStatus.indexing
+
     await db.commit()
     await db.refresh(repo)
 
