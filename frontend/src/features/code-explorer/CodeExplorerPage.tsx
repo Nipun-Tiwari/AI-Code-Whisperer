@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Search, ChevronDown, ChevronRight, FileCode } from 'lucide-react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { PageHeader, LoadingSkeleton } from '@/components'
+import { AppApiError } from '@/api/client'
 import { listRepositories, queryRepository, type EvidenceItem } from '@/api/repositories'
 import { clsx } from 'clsx'
 
@@ -31,6 +32,13 @@ export default function CodeExplorerPage() {
     setResults([])
     searchMutation.mutate()
   }
+
+  const errorMessage =
+    searchMutation.error instanceof AppApiError
+      ? searchMutation.error.message
+      : searchMutation.error instanceof Error
+        ? searchMutation.error.message
+        : 'Search failed. Please try again.'
 
   return (
     <div className="p-6 space-y-6">
@@ -85,14 +93,15 @@ export default function CodeExplorerPage() {
       </div>
 
       {searchMutation.isPending && (
-        <div className="max-w-3xl">
+        <div className="max-w-3xl space-y-2">
+          <p className="text-xs text-text-muted">Retrieving evidence and generating an answer…</p>
           <LoadingSkeleton rows={5} />
         </div>
       )}
 
       {searchMutation.isError && (
         <div className="max-w-3xl p-4 border border-danger/30 bg-danger-subtle rounded-md text-sm text-danger">
-          Search failed. Please try again.
+          {errorMessage}
         </div>
       )}
 
@@ -102,20 +111,20 @@ export default function CodeExplorerPage() {
             {results.length} result{results.length !== 1 ? 's' : ''} for "{searchQuery}"
           </p>
           {results.map((item) => (
-            <div key={item.chunk_id} className="border border-border rounded-lg overflow-hidden">
+            <div key={item.chunkId} className="border border-border rounded-lg overflow-hidden">
               <button
-                onClick={() => setExpandedId(expandedId === item.chunk_id ? null : item.chunk_id)}
+                onClick={() => setExpandedId(expandedId === item.chunkId ? null : item.chunkId)}
                 className="w-full flex items-center justify-between p-3 hover:bg-surface transition-colors text-left"
               >
                 <div className="flex items-center gap-2 min-w-0">
                   <FileCode size={14} className="text-text-muted shrink-0" />
-                  <span className="text-xs font-medium text-text-primary truncate">{item.file_path}</span>
+                  <span className="text-xs font-medium text-text-primary truncate">{item.filePath}</span>
                   <span className="text-xs text-text-muted shrink-0">
-                    L{item.line_start}–{item.line_end}
+                    L{item.lineStart}–{item.lineEnd}
                   </span>
-                  {item.symbol_name && (
+                  {item.symbolName && (
                     <span className="text-xs bg-accent-subtle text-accent px-1.5 py-0.5 rounded shrink-0">
-                      {item.symbol_name.split('.').pop()}
+                      {item.symbolName.split('.').pop()}
                     </span>
                   )}
                   <span className={clsx(
@@ -128,10 +137,10 @@ export default function CodeExplorerPage() {
                   </span>
                 </div>
                 <div className="shrink-0 ml-2 text-text-muted">
-                  {expandedId === item.chunk_id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  {expandedId === item.chunkId ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                 </div>
               </button>
-              {expandedId === item.chunk_id && (
+              {expandedId === item.chunkId && (
                 <div className="border-t border-border">
                   <pre className="p-3 text-xs font-mono text-text-primary bg-surface-elevated overflow-x-auto whitespace-pre-wrap max-h-80">
                     {item.text}

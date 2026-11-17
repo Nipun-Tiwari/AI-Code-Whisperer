@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.agents.background import run_agent_task_background
 from app.agents.task_service import AgentTaskService
 from app.dependencies import DbDep, UserDep
 from app.exceptions import NotFoundError
@@ -29,6 +30,7 @@ async def generate_documentation(
     body: DocumentationCreate,
     current_user: UserDep,
     db: DbDep,
+    background_tasks: BackgroundTasks,
 ) -> TaskResponse:
     """Generate technical documentation grounded in repository evidence."""
     repo_result = await db.execute(
@@ -52,17 +54,13 @@ async def generate_documentation(
         user_request=user_request,
     )
 
-    try:
-        await _service.run_task(db=db, task_id=task.id)
-        await db.refresh(task)
-    except Exception:
-        await db.refresh(task)
+    background_tasks.add_task(run_agent_task_background, task.id)
 
     return TaskResponse(
         task_id=task.id,
         status=task.status.value,
         task_type=task.task_type.value,
-        result=task.result,
+        result=None,
         tokens_used=task.tokens_used,
     )
 

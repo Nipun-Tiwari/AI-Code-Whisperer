@@ -3,6 +3,7 @@ import { useMutation } from '@tanstack/react-query'
 import { FileText, Loader2, Copy, RefreshCw } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { PageHeader, StatusBadge, EmptyState } from '@/components'
+import { AppApiError } from '@/api/client'
 import { useRepositories } from '@/hooks'
 import { generateDocumentation } from '@/api/documentation'
 import type { TaskResponse } from '@/api/tasks'
@@ -10,13 +11,15 @@ import type { TaskResponse } from '@/api/tasks'
 type DocType = 'architecture' | 'module' | 'technical'
 
 type DocumentationResult = {
-  doc_type: string
-  title: string
-  content: string
-  citations: Array<{ file_path: string; line_start: number; line_end: number; symbol_name?: string }>
-  repository_version: string
-  gaps: string[]
-  generated_at: string
+  docType?: string
+  title?: string
+  content?: string
+  citations?: Array<{ filePath: string; lineStart: number; lineEnd: number; symbolName?: string }>
+  repositoryVersion?: string
+  gaps?: string[]
+  generatedAt?: string
+  answer?: string
+  errors?: string[]
 }
 
 const DOC_TYPES: { value: DocType; label: string; description: string }[] = [
@@ -44,10 +47,21 @@ export default function DocumentationPage() {
   })
 
   const docResult = result?.result as DocumentationResult | undefined
+  const citations = docResult?.citations ?? []
+  const gaps = docResult?.gaps ?? []
+  const errors = docResult?.errors ?? []
+  const content = docResult?.content || docResult?.answer || ''
+
+  const errorMessage =
+    mutation.error instanceof AppApiError
+      ? mutation.error.message
+      : mutation.error instanceof Error
+        ? mutation.error.message
+        : 'Documentation generation failed. Please try again.'
 
   const handleCopy = () => {
-    if (docResult?.content) {
-      navigator.clipboard.writeText(docResult.content)
+    if (content) {
+      navigator.clipboard.writeText(content)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     }
@@ -125,6 +139,9 @@ export default function DocumentationPage() {
             </button>
           )}
         </div>
+        {mutation.isError && (
+          <p className="text-sm text-danger">{errorMessage}</p>
+        )}
       </div>
 
       {/* Loading */}
@@ -140,11 +157,11 @@ export default function DocumentationPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <h2 className="text-base font-medium text-text-primary">{docResult.title}</h2>
+              <h2 className="text-base font-medium text-text-primary">{docResult.title || 'Documentation'}</h2>
               <StatusBadge status={(result?.status === 'completed' ? 'completed' : 'partial') as 'completed' | 'partial'} />
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-text-muted">v: {docResult.repository_version?.slice(0, 8) || 'unknown'}</span>
+              <span className="text-xs text-text-muted">v: {docResult.repositoryVersion?.slice(0, 8) || 'unknown'}</span>
               <button
                 className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-sm text-text-secondary rounded-md hover:border-accent/50 transition-colors"
                 onClick={handleCopy}
@@ -155,45 +172,55 @@ export default function DocumentationPage() {
             </div>
           </div>
 
+          {errors.length > 0 && (
+            <ul className="space-y-1">
+              {errors.map((err, i) => (
+                <li key={i} className="text-xs text-danger break-all">{err}</li>
+              ))}
+            </ul>
+          )}
+
           <div className="grid grid-cols-3 gap-4">
             {/* Main content */}
             <div className="col-span-2 border border-border rounded-lg p-5 bg-surface">
               <div className="prose prose-sm max-w-none text-text-primary [&>h1]:text-base [&>h1]:font-semibold [&>h2]:text-sm [&>h2]:font-semibold [&>h3]:text-sm [&>h3]:font-medium [&>p]:text-sm [&>p]:text-text-secondary [&>ul]:text-sm [&>ul]:text-text-secondary [&>code]:text-xs [&>pre]:text-xs [&>pre]:bg-surface-elevated [&>pre]:p-3 [&>pre]:rounded">
-                <ReactMarkdown>{docResult.content}</ReactMarkdown>
+                <ReactMarkdown>{content || 'No documentation content was generated.'}</ReactMarkdown>
               </div>
             </div>
 
             {/* Citations panel */}
             <div className="space-y-3">
-              {docResult.citations.length > 0 && (
+              {citations.length > 0 && (
                 <div className="border border-border rounded-lg p-4 bg-surface">
-                  <h4 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-2">Sources ({docResult.citations.length})</h4>
+                  <h4 className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-2">Sources ({citations.length})</h4>
                   <ul className="space-y-1.5">
-                    {docResult.citations.map((c, i) => (
+                    {citations.map((c, i) => (
                       <li key={i} className="text-xs font-mono text-text-secondary">
-                        {c.file_path}
-                        {c.line_start ? `:${c.line_start}` : ''}
-                        {c.symbol_name ? <span className="text-accent"> {c.symbol_name}</span> : null}
+                        {c.filePath}
+                        {c.lineStart ? `:${c.lineStart}` : ''}
+                        {c.symbolName ? <span className="text-accent"> {c.symbolName}</span> : null}
                       </li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              {docResult.gaps.length > 0 && (
+              {gaps.length > 0 && (
                 <div className="border border-warning/30 rounded-lg p-4 bg-warning-subtle">
                   <h4 className="text-xs font-medium text-warning uppercase tracking-wide mb-2">Gaps</h4>
                   <ul className="space-y-1">
-                    {docResult.gaps.map((g, i) => (
+                    {gaps.map((g, i) => (
                       <li key={i} className="text-xs text-warning/80">{g}</li>
                     ))}
                   </ul>
                 </div>
               )}
 
-              <div className="text-xs text-text-muted">
-                Generated {new Date(docResult.generated_at).toLocaleString()}
-              </div>
+              {docResult.generatedAt && (
+                <div className="text-xs text-text-muted">
+                  Generated {new Date(docResult.generatedAt).toLocaleString()}
+                </div>
+              )}
             </div>
           </div>
         </div>

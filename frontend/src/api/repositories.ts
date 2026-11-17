@@ -1,4 +1,5 @@
 import { apiClient } from './client'
+import { pollUntilDone, type TaskResponse } from './tasks'
 import type { Repository, IndexJob, PaginatedResponse } from '@/types'
 
 export interface AddRepositoryRequest {
@@ -34,22 +35,22 @@ export interface ChatQueryRequest {
 }
 
 export interface EvidenceItem {
-  chunk_id: string
-  file_path: string
-  line_start: number
-  line_end: number
+  chunkId: string
+  filePath: string
+  lineStart: number
+  lineEnd: number
   text: string
-  symbol_name: string | null
+  symbolName: string | null
   language: string
-  chunk_type: string
+  chunkType: string
   score: number
-  retrieval_method: string
+  retrievalMethod: string
 }
 
 export interface ChatQueryResponse {
   answer: string
   evidence: EvidenceItem[]
-  repository_id: string
+  repositoryId: string
   question: string
 }
 
@@ -119,7 +120,23 @@ export async function listAccessibleRepos(): Promise<GitHubRepo[]> {
   return data
 }
 
-export async function queryRepository(request: ChatQueryRequest): Promise<ChatQueryResponse> {
-  const { data } = await apiClient.post<ChatQueryResponse>('/api/v1/chat/query', request)
+export async function getChatQuery(taskId: string): Promise<TaskResponse> {
+  const { data } = await apiClient.get<TaskResponse>(`/api/v1/chat/query/${taskId}`)
   return data
+}
+
+export async function queryRepository(request: ChatQueryRequest): Promise<ChatQueryResponse> {
+  const { data: created } = await apiClient.post<TaskResponse>('/api/v1/chat/query', request)
+  const task = await pollUntilDone(getChatQuery, created.taskId)
+  const result = (task.result ?? {}) as Record<string, unknown>
+  const evidence = Array.isArray(result.evidence) ? (result.evidence as EvidenceItem[]) : []
+  return {
+    answer: typeof result.answer === 'string' ? result.answer : 'No answer returned.',
+    evidence,
+    repositoryId:
+      typeof result.repositoryId === 'string'
+        ? result.repositoryId
+        : request.repository_id,
+    question: typeof result.question === 'string' ? result.question : request.question,
+  }
 }

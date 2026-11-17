@@ -2,25 +2,20 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter
+from fastapi import APIRouter, BackgroundTasks
+from pydantic import BaseModel
 from sqlalchemy import select
 
+from app.agents.background import run_agent_task_background
 from app.agents.task_service import AgentTaskService
 from app.dependencies import DbDep, UserDep
 from app.exceptions import NotFoundError
-from app.models import AgentTask, Repository
+from app.models import Repository
 from app.schemas.indexing import TaskResponse
 
 router = APIRouter(prefix="/investigations", tags=["investigations"])
 
 _service = AgentTaskService()
-
-
-class InvestigationRequest:
-    pass
-
-
-from pydantic import BaseModel
 
 
 class InvestigationCreate(BaseModel):
@@ -34,9 +29,9 @@ async def start_investigation(
     body: InvestigationCreate,
     current_user: UserDep,
     db: DbDep,
+    background_tasks: BackgroundTasks,
 ) -> TaskResponse:
     """Start a code-level root-cause investigation for a reported issue."""
-    # Verify repo access
     repo_result = await db.execute(
         select(Repository).where(
             Repository.id == body.repository_id,
@@ -55,18 +50,13 @@ async def start_investigation(
         user_request=body.description,
     )
 
-    # Run synchronously for now (async background task in Phase 4)
-    try:
-        result = await _service.run_task(db=db, task_id=task.id)
-        await db.refresh(task)
-    except Exception:
-        await db.refresh(task)
+    background_tasks.add_task(run_agent_task_background, task.id)
 
     return TaskResponse(
         task_id=task.id,
         status=task.status.value,
         task_type=task.task_type.value,
-        result=task.result,
+        result=None,
         tokens_used=task.tokens_used,
     )
 

@@ -5,39 +5,39 @@ export interface MetricValue {
   label: string
   value: number | null
   unit: string
-  source_type: string
+  sourceType: string
 }
 
 export interface ServiceStatus {
-  service_key: string
+  serviceKey: string
   name: string
   category: string
   configured: boolean
   status: string
   metrics: MetricValue[]
-  last_checked: string | null
-  source_type: string
-  dependent_features: string[]
-  error_message: string | null
+  lastChecked: string | null
+  sourceType: string
+  dependentFeatures: string[]
+  errorMessage: string | null
 }
 
 export interface DashboardSummary {
-  total_services: number
+  totalServices: number
   operational: number
   degraded: number
-  quota_exhausted: number
-  not_configured: number
+  quotaExhausted: number
+  notConfigured: number
   unknown: number
   services: ServiceStatus[]
-  generated_at: string
+  generatedAt: string
 }
 
 export interface UsagePoint {
-  recorded_at: string
+  recordedAt: string
   metric: string
   quantity: number
   unit: string
-  source_type: string
+  sourceType: string
 }
 
 export async function getUsageOverview(): Promise<DashboardSummary> {
@@ -45,7 +45,7 @@ export async function getUsageOverview(): Promise<DashboardSummary> {
   return data
 }
 
-export async function listServices(): Promise<ServiceStatus[]> {
+export async function getServices(): Promise<ServiceStatus[]> {
   const { data } = await apiClient.get<ServiceStatus[]>('/api/v1/usage/services')
   return data
 }
@@ -60,9 +60,9 @@ export async function refreshService(serviceKey: string): Promise<ServiceStatus>
   return data
 }
 
-export async function getUsageHistory(serviceKey: string, days = 7): Promise<UsagePoint[]> {
+export async function getUsageHistory(serviceKey: string, hours = 24): Promise<UsagePoint[]> {
   const { data } = await apiClient.get<UsagePoint[]>('/api/v1/usage/history', {
-    params: { service: serviceKey, days },
+    params: { service_key: serviceKey, hours },
   })
   return data
 }

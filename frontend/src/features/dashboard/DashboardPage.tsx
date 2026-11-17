@@ -51,7 +51,7 @@ export function DashboardPage() {
   const todayStart = new Date()
   todayStart.setHours(0, 0, 0, 0)
   const tasksToday = tasksData?.filter(
-    (t) => new Date(t.created_at) >= todayStart
+    (t) => t.createdAt && new Date(t.createdAt) >= todayStart
   ).length ?? null
 
   const recentTasks = tasksData?.slice(0, 5) ?? []
@@ -98,7 +98,7 @@ export function DashboardPage() {
           />
           <StatTile
             label="Total services"
-            value={usageSummary?.total_services ?? null}
+            value={usageSummary?.totalServices ?? null}
             icon={ArrowRight}
             isLoading={usageLoading}
           />
@@ -187,16 +187,16 @@ export function DashboardPage() {
                 <div className="border border-border rounded-lg divide-y divide-border-subtle">
                   {recentTasks.map((task) => (
                     <Link
-                      key={task.task_id}
+                      key={task.taskId}
                       to="/agent-activity"
                       className="flex items-center gap-3 px-4 py-2.5 hover:bg-hover transition-colors"
                     >
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-text-primary capitalize truncate">
-                          {task.task_type?.replace('_', ' ')}
+                          {task.taskType?.replace('_', ' ')}
                         </p>
                         <p className="text-xs text-text-muted">
-                          {new Date(task.created_at).toLocaleString()}
+                          {task.createdAt ? new Date(task.createdAt).toLocaleString() : '—'}
                         </p>
                       </div>
                       <StatusBadge status={(task.status || 'unknown') as never} size="sm" />
@@ -220,7 +220,7 @@ export function DashboardPage() {
               <div className="border border-border rounded-lg divide-y divide-border-subtle">
                 {usageLoading && <div className="p-3"><LoadingSkeleton rows={4} /></div>}
                 {!usageLoading && usageSummary?.services.slice(0, 4).map((svc) => (
-                  <div key={svc.service_key} className="flex items-center gap-3 px-3 py-2.5">
+                  <div key={svc.serviceKey} className="flex items-center gap-3 px-3 py-2.5">
                     <span
                       className="w-2 h-2 rounded-full shrink-0"
                       style={{

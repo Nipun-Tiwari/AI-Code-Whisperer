@@ -97,8 +97,8 @@ function ServiceRow({
 }) {
   const [expanded, setExpanded] = useState(false)
   const { data: history } = useQuery({
-    queryKey: ['usage-history', svc.service_key],
-    queryFn: () => getUsageHistory(svc.service_key, 1),
+    queryKey: ['usage-history', svc.serviceKey],
+    queryFn: () => getUsageHistory(svc.serviceKey, 1),
     enabled: expanded,
     staleTime: 60_000,
   })
@@ -140,7 +140,7 @@ function ServiceRow({
               </span>
               {primaryMetric.value !== null && (
                 <span className="ml-1.5 text-[11px] text-text-muted">
-                  {SOURCE_LABELS[primaryMetric.source_type] ?? primaryMetric.source_type}
+                  {SOURCE_LABELS[primaryMetric.sourceType] ?? primaryMetric.sourceType}
                 </span>
               )}
             </div>
@@ -149,11 +149,11 @@ function ServiceRow({
           )}
         </td>
         <td className="px-4 py-3 text-xs text-text-muted">
-          {formatRelativeTime(svc.last_checked)}
+          {formatRelativeTime(svc.lastChecked)}
         </td>
         <td className="px-4 py-3">
           <button
-            onClick={(e) => { e.stopPropagation(); onRefresh(svc.service_key) }}
+            onClick={(e) => { e.stopPropagation(); onRefresh(svc.serviceKey) }}
             disabled={isRefreshing}
             aria-label={`Refresh ${svc.name}`}
             title={`Refresh ${svc.name}`}
@@ -183,7 +183,7 @@ function ServiceRow({
                           {m.value !== null ? formatMetricValue(m.value, m.unit) : <span className="text-text-muted text-xs">Unavailable</span>}
                         </span>
                         <span className="text-[11px] text-text-muted">
-                          {SOURCE_LABELS[m.source_type] ?? m.source_type}
+                          {SOURCE_LABELS[m.sourceType] ?? m.sourceType}
                         </span>
                       </div>
                     </div>
@@ -198,7 +198,7 @@ function ServiceRow({
               <div>
                 <h4 className="text-xs font-medium text-text-muted uppercase tracking-wider mb-2">Dependent Features</h4>
                 <div className="flex flex-wrap gap-1">
-                  {svc.dependent_features.map((f) => (
+                  {(svc.dependentFeatures ?? []).map((f) => (
                     <span key={f} className="text-xs px-2 py-0.5 rounded border border-border bg-canvas text-text-secondary">
                       {f}
                     </span>
@@ -213,7 +213,7 @@ function ServiceRow({
                       {history.slice(0, 5).map((pt, i) => (
                         <div key={i} className="flex items-center justify-between text-xs">
                           <span className="text-text-muted">
-                            {new Date(pt.recorded_at).toLocaleTimeString()}
+                            {new Date(pt.recordedAt).toLocaleTimeString()}
                           </span>
                           <span className="text-text-secondary font-mono">
                             {pt.quantity.toLocaleString()} {pt.unit}
@@ -224,8 +224,8 @@ function ServiceRow({
                   </div>
                 )}
 
-                {svc.error_message && (
-                  <p className="mt-3 text-xs text-danger">{svc.error_message}</p>
+                {svc.errorMessage && (
+                  <p className="mt-3 text-xs text-danger">{svc.errorMessage}</p>
                 )}
               </div>
             </div>
@@ -332,8 +332,8 @@ export function UsagePage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <OverviewTile label="Operational" count={summary.operational} icon={CheckCircle2} colorClass="text-success" />
           <OverviewTile label="Degraded" count={summary.degraded} icon={AlertTriangle} colorClass="text-warning" />
-          <OverviewTile label="Quota Exhausted" count={summary.quota_exhausted} icon={XCircle} colorClass="text-danger" />
-          <OverviewTile label="Not Configured" count={summary.not_configured} icon={HelpCircle} colorClass="text-text-muted" />
+          <OverviewTile label="Quota Exhausted" count={summary.quotaExhausted} icon={XCircle} colorClass="text-danger" />
+          <OverviewTile label="Not Configured" count={summary.notConfigured} icon={HelpCircle} colorClass="text-text-muted" />
         </div>
 
         {/* Service groups */}
@@ -356,9 +356,9 @@ export function UsagePage() {
                 <tbody className="divide-y divide-border-subtle">
                   {servicesByCategory[cat].map((svc) => (
                     <ServiceRow
-                      key={svc.service_key}
+                      key={svc.serviceKey}
                       svc={svc}
-                      isRefreshing={refreshingKey === svc.service_key}
+                      isRefreshing={refreshingKey === svc.serviceKey}
                       onRefresh={(key) => refreshMutation.mutate(key)}
                     />
                   ))}

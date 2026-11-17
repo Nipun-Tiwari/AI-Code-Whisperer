@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ThemeProvider } from '@/components/theme/ThemeProvider'
 import { AppShell } from '@/components/layout/AppShell'
 import { ToastContainer } from '@/components/ui/Toast'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
 import { ProtectedRoute } from '@/components/auth/ProtectedRoute'
 import { LoginPage } from '@/features/auth/LoginPage'
 import { DashboardPage } from '@/features/dashboard/DashboardPage'
@@ -81,19 +82,27 @@ export function App() {
             {/* Protected routes wrapped in ProtectedRoute and AppShell */}
             <Route element={<ProtectedRoute />}>
               <Route element={<AppShell />}>
-                <Route index element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<DashboardPage />} />
-                <Route path="/repositories" element={<RepositoriesPage />} />
-                <Route path="/repositories/:id" element={<RepositoryDetailPage />} />
-                <Route path="/workspace" element={<WorkspacePage />} />
-                <Route path="/code-explorer" element={<CodeExplorerPage />} />
-                <Route path="/investigation" element={<InvestigationPage />} />
-                <Route path="/security" element={<SecurityPage />} />
-                <Route path="/documentation" element={<DocumentationPage />} />
-                <Route path="/agent-activity" element={<AgentActivityPage />} />
-                <Route path="/mcp-tools" element={<McpToolsPage />} />
-                <Route path="/usage" element={<UsagePage />} />
-                <Route path="/settings" element={<SettingsPage />} />
+                <Route
+                  element={
+                    <ErrorBoundary>
+                      <Outlet />
+                    </ErrorBoundary>
+                  }
+                >
+                  <Route index element={<Navigate to="/dashboard" replace />} />
+                  <Route path="/dashboard" element={<DashboardPage />} />
+                  <Route path="/repositories" element={<RepositoriesPage />} />
+                  <Route path="/repositories/:id" element={<RepositoryDetailPage />} />
+                  <Route path="/workspace" element={<WorkspacePage />} />
+                  <Route path="/code-explorer" element={<CodeExplorerPage />} />
+                  <Route path="/investigation" element={<InvestigationPage />} />
+                  <Route path="/security" element={<SecurityPage />} />
+                  <Route path="/documentation" element={<DocumentationPage />} />
+                  <Route path="/agent-activity" element={<AgentActivityPage />} />
+                  <Route path="/mcp-tools" element={<McpToolsPage />} />
+                  <Route path="/usage" element={<UsagePage />} />
+                  <Route path="/settings" element={<SettingsPage />} />
+                </Route>
               </Route>
             </Route>
 

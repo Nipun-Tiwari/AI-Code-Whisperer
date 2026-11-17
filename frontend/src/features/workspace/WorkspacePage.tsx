@@ -86,7 +86,7 @@ export default function WorkspacePage() {
               className="flex items-center gap-2 px-4 py-2 bg-accent text-white rounded-md text-sm font-medium hover:bg-accent-hover transition-colors disabled:opacity-50"
             >
               <Search size={14} />
-              {queryMutation.isPending ? 'Searching…' : 'Ask'}
+              {queryMutation.isPending ? 'Working…' : 'Ask'}
             </button>
           </div>
         </form>
@@ -138,9 +138,15 @@ export default function WorkspacePage() {
             </div>
           )
         }
+        const message =
+          err instanceof AppApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Query failed. Please try again.'
         return (
           <div className="max-w-3xl p-4 border border-danger/30 bg-danger-subtle rounded-md text-sm text-danger">
-            Query failed. Please try again.
+            {message}
           </div>
         )
       })()}
@@ -169,7 +175,7 @@ export default function WorkspacePage() {
               </h3>
               <div className="space-y-2">
                 {result.evidence.map((item) => (
-                  <EvidenceCard key={item.chunk_id} item={item} />
+                  <EvidenceCard key={item.chunkId} item={item} />
                 ))}
               </div>
             </div>
@@ -191,18 +197,18 @@ function EvidenceCard({ item }: { item: EvidenceItem }) {
       >
         <div className="flex items-center gap-2 min-w-0">
           <FileCode size={14} className="text-text-muted shrink-0" />
-          <span className="text-xs font-medium text-text-primary truncate">{item.file_path}</span>
+          <span className="text-xs font-medium text-text-primary truncate">{item.filePath}</span>
           <span className="text-xs text-text-muted shrink-0">
-            L{item.line_start}–{item.line_end}
+            L{item.lineStart}–{item.lineEnd}
           </span>
-          {item.symbol_name && (
+          {item.symbolName && (
             <span className="text-xs bg-accent-subtle text-accent px-1.5 py-0.5 rounded shrink-0">
-              {item.symbol_name.split('.').pop()}
+              {item.symbolName.split('.').pop()}
             </span>
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0 ml-2">
-          <span className="text-xs text-text-muted capitalize">{item.retrieval_method}</span>
+          <span className="text-xs text-text-muted capitalize">{item.retrievalMethod}</span>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </div>
       </button>

@@ -11,6 +11,8 @@ from app.agents.state import WorkflowState
 
 logger = structlog.get_logger(__name__)
 
+_PINNED_TYPES = frozenset({"investigation", "security", "documentation", "repository_qa"})
+
 _BUDGET_BY_TYPE: dict[str, int] = {
     "investigation": 8000,
     "security": 6000,
@@ -37,22 +39,55 @@ If unclear, default to "repository_qa"."""
 
 
 async def planner_node(state: WorkflowState) -> WorkflowState:
-    """Classify the user request and assign routing + token budget."""
+    """Classify the user request and assign routing + token budget.
+
+    When the API already pinned a request_type (security / investigation /
+    documentation / repository_qa), never reclassify away from it — especially
+    not to repository_qa on quota failure.
+    """
     settings = get_settings()
     user_request = state["user_request"]
+    pinned_raw = state.get("request_type") or ""
+    pinned = pinned_raw if pinned_raw in _PINNED_TYPES else None
 
     # Check LLM quota before proceeding
     from app.usage.quota_manager import get_quota_manager
     qm = get_quota_manager()
     if not await qm.check_service_available("gemini_llm"):
+        request_type = pinned or "repository_qa"
         return {
             **state,
-            "request_type": "repository_qa",
-            "plan": {"type": "repository_qa", "reasoning": "llm_quota_exhausted", "key_entities": []},
-            "token_budget": 0,
-            "task_status": "failed",
-            "service_constraints": [*(state.get("service_constraints") or []), "gemini_llm:quota_exhausted"],
-            "errors": [*(state.get("errors") or []), "LLM service quota exhausted. Please try again later."],
+            "request_type": request_type,
+            "plan": {
+                "type": request_type,
+                "reasoning": "llm_quota_exhausted",
+                "key_entities": [],
+            },
+            "token_budget": _BUDGET_BY_TYPE.get(request_type, 4000),
+            # Keep running so pinned specialist agents (e.g. security) can still execute.
+            "task_status": "running" if pinned else "failed",
+            "service_constraints": [
+                *(state.get("service_constraints") or []),
+                "gemini_llm:quota_exhausted",
+            ],
+            "errors": [
+                *(state.get("errors") or []),
+                "LLM service quota exhausted. Please try again later.",
+            ],
+        }
+
+    # Pinned API intent: skip LLM classification, route to the correct agent.
+    if pinned:
+        return {
+            **state,
+            "request_type": pinned,
+            "plan": {
+                "type": pinned,
+                "reasoning": "pinned_by_api",
+                "key_entities": [],
+            },
+            "token_budget": _BUDGET_BY_TYPE[pinned],
+            "task_status": "running",
         }
 
     request_type = "repository_qa"

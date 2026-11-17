@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
 import { Search, AlertCircle, ChevronDown, ChevronRight, Loader2 } from 'lucide-react'
 import { PageHeader, StatusBadge, EmptyState } from '@/components'
+import { AppApiError } from '@/api/client'
 import { useRepositories } from '@/hooks'
 import { startInvestigation } from '@/api/investigations'
 import type { TaskResponse } from '@/api/tasks'
@@ -10,7 +11,7 @@ import { clsx } from 'clsx'
 type Hypothesis = {
   rank: number
   description: string
-  supporting_evidence: string[]
+  supportingEvidence: string[]
   confidence: 'high' | 'medium' | 'low'
 }
 
@@ -22,13 +23,15 @@ type ExecutionStep = {
 }
 
 type InvestigationResult = {
-  symptom_summary: string
-  affected_files: string[]
-  execution_path: ExecutionStep[]
-  hypotheses: Hypothesis[]
-  suggested_remediation: string
-  limitations: string
-  follow_up_checks: string[]
+  symptomSummary?: string
+  affectedFiles?: string[]
+  executionPath?: ExecutionStep[]
+  hypotheses?: Hypothesis[]
+  suggestedRemediation?: string
+  limitations?: string
+  followUpChecks?: string[]
+  answer?: string
+  errors?: string[]
 }
 
 export default function InvestigationPage() {
@@ -48,12 +51,23 @@ export default function InvestigationPage() {
   })
 
   const investigationResult = result?.result as InvestigationResult | undefined
+  const affectedFiles = investigationResult?.affectedFiles ?? []
+  const executionPath = investigationResult?.executionPath ?? []
+  const hypotheses = investigationResult?.hypotheses ?? []
+  const errors = investigationResult?.errors ?? []
 
   const confidenceColor: Record<string, string> = {
     high: 'text-danger',
     medium: 'text-warning',
     low: 'text-text-secondary',
   }
+
+  const errorMessage =
+    mutation.error instanceof AppApiError
+      ? mutation.error.message
+      : mutation.error instanceof Error
+        ? mutation.error.message
+        : 'Investigation failed. Please try again.'
 
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
@@ -62,7 +76,6 @@ export default function InvestigationPage() {
         subtitle="Trace likely root causes of reported defects using indexed repository evidence."
       />
 
-      {/* Input form */}
       <div className="border border-border rounded-lg p-5 space-y-4 bg-surface">
         <div className="space-y-1">
           <label className="text-sm font-medium text-text-primary">Repository</label>
@@ -104,16 +117,15 @@ export default function InvestigationPage() {
         </button>
 
         {mutation.isError && (
-          <p className="text-sm text-danger">Investigation failed. Please try again.</p>
+          <p className="text-sm text-danger">{errorMessage}</p>
         )}
       </div>
 
-      {/* Results */}
       {mutation.isPending && (
         <div className="border border-border rounded-lg p-6 space-y-3 bg-surface">
           <div className="flex items-center gap-2 text-text-secondary text-sm">
             <Loader2 size={14} className="animate-spin" />
-            <span>Planning investigation...</span>
+            <span>Running investigation...</span>
           </div>
           <div className="text-xs text-text-muted">Retrieving evidence and tracing code paths</div>
         </div>
@@ -121,31 +133,40 @@ export default function InvestigationPage() {
 
       {investigationResult && (
         <div className="space-y-4">
-          {/* Symptom summary */}
-          <div className="border border-border rounded-lg p-5 bg-surface space-y-2">
-            <div className="flex items-center gap-2">
-              <AlertCircle size={14} className="text-warning" />
-              <span className="text-sm font-medium text-text-primary">Symptom</span>
-              <StatusBadge status={(result?.status === 'completed' ? 'completed' : 'partial') as 'completed' | 'partial'} />
-            </div>
-            <p className="text-sm text-text-secondary">{investigationResult.symptom_summary}</p>
-            {investigationResult.affected_files.length > 0 && (
-              <div className="flex flex-wrap gap-1 mt-2">
-                {investigationResult.affected_files.map((f) => (
-                  <span key={f} className="text-xs font-mono bg-surface-elevated border border-border px-2 py-0.5 rounded text-text-secondary">
-                    {f}
-                  </span>
-                ))}
+          {(investigationResult.symptomSummary || investigationResult.answer || errors.length > 0) && (
+            <div className="border border-border rounded-lg p-5 bg-surface space-y-2">
+              <div className="flex items-center gap-2">
+                <AlertCircle size={14} className="text-warning" />
+                <span className="text-sm font-medium text-text-primary">Symptom</span>
+                <StatusBadge status={(result?.status === 'completed' ? 'completed' : 'partial') as 'completed' | 'partial'} />
               </div>
-            )}
-          </div>
+              <p className="text-sm text-text-secondary">
+                {investigationResult.symptomSummary || investigationResult.answer || 'Investigation finished with limited output.'}
+              </p>
+              {affectedFiles.length > 0 && (
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {affectedFiles.map((f) => (
+                    <span key={f} className="text-xs font-mono bg-surface-elevated border border-border px-2 py-0.5 rounded text-text-secondary">
+                      {f}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {errors.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {errors.map((err, i) => (
+                    <li key={i} className="text-xs text-danger break-all">{err}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
-          {/* Execution path */}
-          {investigationResult.execution_path.length > 0 && (
+          {executionPath.length > 0 && (
             <div className="border border-border rounded-lg p-5 bg-surface space-y-3">
               <h3 className="text-sm font-medium text-text-primary">Execution Path</h3>
               <div className="space-y-2">
-                {investigationResult.execution_path.map((step) => (
+                {executionPath.map((step) => (
                   <div key={step.step} className="flex gap-3">
                     <div className="flex flex-col items-center">
                       <div className="w-5 h-5 rounded-full bg-accent-subtle border border-accent text-accent text-xs flex items-center justify-center font-mono shrink-0">
@@ -173,12 +194,11 @@ export default function InvestigationPage() {
             </div>
           )}
 
-          {/* Hypotheses */}
-          {investigationResult.hypotheses.length > 0 && (
+          {hypotheses.length > 0 && (
             <div className="border border-border rounded-lg p-5 bg-surface space-y-3">
               <h3 className="text-sm font-medium text-text-primary">Root Cause Hypotheses</h3>
               <div className="space-y-2">
-                {investigationResult.hypotheses.map((h) => (
+                {hypotheses.map((h) => (
                   <div key={h.rank} className="border border-border rounded-md overflow-hidden">
                     <button
                       className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-surface-elevated transition-colors"
@@ -191,10 +211,10 @@ export default function InvestigationPage() {
                       </span>
                       {expandedHypothesis === h.rank ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                     </button>
-                    {expandedHypothesis === h.rank && h.supporting_evidence.length > 0 && (
+                    {expandedHypothesis === h.rank && (h.supportingEvidence?.length ?? 0) > 0 && (
                       <div className="px-4 pb-3 border-t border-border bg-surface-elevated">
                         <ul className="mt-2 space-y-1">
-                          {h.supporting_evidence.map((e, i) => (
+                          {(h.supportingEvidence ?? []).map((e, i) => (
                             <li key={i} className="text-xs text-text-secondary font-mono">{e}</li>
                           ))}
                         </ul>
@@ -206,15 +226,13 @@ export default function InvestigationPage() {
             </div>
           )}
 
-          {/* Remediation */}
-          {investigationResult.suggested_remediation && (
+          {investigationResult.suggestedRemediation && (
             <div className="border border-border rounded-lg p-5 bg-surface space-y-2">
               <h3 className="text-sm font-medium text-text-primary">Suggested Remediation</h3>
-              <p className="text-sm text-text-secondary whitespace-pre-wrap">{investigationResult.suggested_remediation}</p>
+              <p className="text-sm text-text-secondary whitespace-pre-wrap">{investigationResult.suggestedRemediation}</p>
             </div>
           )}
 
-          {/* Limitations */}
           {investigationResult.limitations && (
             <div className="border border-border/50 rounded-lg p-4 bg-warning-subtle text-warning text-xs">
               <span className="font-medium">Limitations: </span>

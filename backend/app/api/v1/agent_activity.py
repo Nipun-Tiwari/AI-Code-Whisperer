@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, BackgroundTasks, Query
 from pydantic import BaseModel
 
+from app.agents.background import run_agent_task_background
 from app.agents.task_service import AgentTaskService
 from app.dependencies import DbDep, UserDep
 from app.exceptions import NotFoundError
@@ -71,11 +72,12 @@ async def get_agent_activity_detail(
     )
 
 
-@router.post("/tasks/{task_id}/retry", response_model=TaskResponse)
+@router.post("/tasks/{task_id}/retry", response_model=TaskResponse, status_code=202)
 async def retry_task(
     task_id: uuid.UUID,
     current_user: UserDep,
     db: DbDep,
+    background_tasks: BackgroundTasks,
 ) -> TaskResponse:
     """Retry a failed or partial agent task."""
     task = await _service.get_task(db=db, task_id=task_id)
@@ -86,21 +88,17 @@ async def retry_task(
         from app.exceptions import ConflictError
         raise ConflictError(f"Task cannot be retried in status: {task.status.value}")
 
-    # Reset task status for retry
     task.status = TaskStatus.queued
     task.result = None
+    task.completed_at = None
     await db.commit()
 
-    try:
-        await _service.run_task(db=db, task_id=task.id)
-        await db.refresh(task)
-    except Exception:
-        await db.refresh(task)
+    background_tasks.add_task(run_agent_task_background, task.id)
 
     return TaskResponse(
         task_id=task.id,
         status=task.status.value,
         task_type=task.task_type.value,
-        result=task.result,
+        result=None,
         tokens_used=task.tokens_used,
     )

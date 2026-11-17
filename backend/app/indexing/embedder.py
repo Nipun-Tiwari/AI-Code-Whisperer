@@ -18,6 +18,8 @@ _EMBED_TEXT_CHARS = 2000
 _MAX_BATCH_TOKENS = 8000
 _MIN_BACKOFF_SECONDS = 4
 _MAX_BACKOFF_SECONDS = 120
+_QUERY_MAX_RETRIES = 3
+_QUERY_MAX_BACKOFF_SECONDS = 15
 _RETRY_IN_RE = re.compile(r"retry in ([0-9]+(?:\.[0-9]+)?)s", re.IGNORECASE)
 
 
@@ -75,15 +77,20 @@ class EmbeddingClient:
         truncated = [text[:_EMBED_TEXT_CHARS] for text in texts]
         all_embeddings: list[list[float]] = []
         for batch in self._iter_token_safe_batches(truncated):
-            embeddings = await self._embed_batch(batch, task_type="RETRIEVAL_DOCUMENT")
+            embeddings = await self._embed_batch(
+                batch,
+                task_type="RETRIEVAL_DOCUMENT",
+                max_retries=None,
+            )
             all_embeddings.extend(embeddings)
         return all_embeddings
 
     async def embed_query(self, text: str) -> list[float]:
-        """Embed a single query string."""
+        """Embed a single query string with bounded retries (BM25 can fall back)."""
         results = await self._embed_batch(
             [text[:_EMBED_TEXT_CHARS]],
             task_type="RETRIEVAL_QUERY",
+            max_retries=_QUERY_MAX_RETRIES,
         )
         return results[0]
 
@@ -112,8 +119,16 @@ class EmbeddingClient:
         return batches
 
     async def _embed_batch(
-        self, texts: list[str], task_type: str
+        self,
+        texts: list[str],
+        task_type: str,
+        max_retries: int | None = None,
     ) -> list[list[float]]:
+        """Embed a batch.
+
+        max_retries=None means retry transient limits indefinitely (indexing).
+        A finite max_retries is for query-time embeds so callers can fall back.
+        """
         attempt = 0
         while True:
             try:
@@ -143,7 +158,16 @@ class EmbeddingClient:
                     ) from exc
 
                 if _is_transient_rate_limit(err_str):
+                    if max_retries is not None and attempt >= max_retries:
+                        logger.warning(
+                            "Embedding query retries exhausted, raising for fallback",
+                            attempt=attempt + 1,
+                            max_retries=max_retries,
+                        )
+                        raise
                     wait = _parse_retry_seconds(err_str, attempt)
+                    if max_retries is not None:
+                        wait = min(wait, _QUERY_MAX_BACKOFF_SECONDS)
                     logger.warning(
                         "Embedding rate limit, backing off",
                         attempt=attempt + 1,

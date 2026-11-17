@@ -65,35 +65,34 @@ export default function AgentActivityPage() {
       ) : (
         <div className="border border-border rounded-lg overflow-hidden bg-surface">
           {tasks.map((task) => (
-            <div key={task.task_id} className={clsx('border-b border-border last:border-b-0', expandedTask === task.task_id && 'bg-surface-elevated')}>
-              {/* Row */}
+            <div key={task.taskId} className={clsx('border-b border-border last:border-b-0', expandedTask === task.taskId && 'bg-surface-elevated')}>
               <div
                 className="flex items-center gap-4 px-4 py-3 cursor-pointer hover:bg-surface-elevated transition-colors"
-                onClick={() => setExpandedTask(expandedTask === task.task_id ? null : task.task_id)}
+                onClick={() => setExpandedTask(expandedTask === task.taskId ? null : task.taskId)}
               >
                 <div className="w-4">
-                  {expandedTask === task.task_id ? <ChevronDown size={13} className="text-text-muted" /> : <ChevronRight size={13} className="text-text-muted" />}
+                  {expandedTask === task.taskId ? <ChevronDown size={13} className="text-text-muted" /> : <ChevronRight size={13} className="text-text-muted" />}
                 </div>
 
                 <StatusBadge status={(task.status || 'unknown') as 'completed' | 'failed' | 'partial' | 'paused' | 'queued' | 'unknown'} />
 
                 <span className="text-sm text-text-primary flex-1 min-w-0 truncate">
-                  {TASK_TYPE_LABELS[task.task_type] || task.task_type}
+                  {TASK_TYPE_LABELS[task.taskType] || task.taskType}
                 </span>
 
                 <span className="text-xs text-text-muted w-32 truncate">
-                  {new Date(task.created_at).toLocaleString()}
+                  {task.createdAt ? new Date(task.createdAt).toLocaleString() : '—'}
                 </span>
 
-                {task.completed_at && (
+                {task.completedAt && task.createdAt && (
                   <span className="text-xs text-text-muted w-20 text-right">
-                    {Math.round((new Date(task.completed_at).getTime() - new Date(task.created_at).getTime()) / 1000)}s
+                    {Math.round((new Date(task.completedAt).getTime() - new Date(task.createdAt).getTime()) / 1000)}s
                   </span>
                 )}
 
-                {task.tokens_used != null && (
+                {task.tokensUsed != null && (
                   <span className="text-xs text-text-muted w-20 text-right font-mono">
-                    {task.tokens_used.toLocaleString()} tok
+                    {task.tokensUsed.toLocaleString()} tok
                   </span>
                 )}
 
@@ -101,7 +100,7 @@ export default function AgentActivityPage() {
                   <button
                     className="p-1 rounded hover:bg-surface transition-colors text-text-muted hover:text-text-secondary"
                     title="Copy task ID"
-                    onClick={(e) => { e.stopPropagation(); handleCopyId(task.task_id) }}
+                    onClick={(e) => { e.stopPropagation(); handleCopyId(task.taskId) }}
                   >
                     <Copy size={12} />
                   </button>
@@ -109,7 +108,7 @@ export default function AgentActivityPage() {
                   {isRetryable(task.status) && (
                     <button
                       className="px-2 py-1 text-xs border border-border rounded hover:border-accent/50 text-text-secondary transition-colors"
-                      onClick={(e) => { e.stopPropagation(); retryMutation.mutate(task.task_id) }}
+                      onClick={(e) => { e.stopPropagation(); retryMutation.mutate(task.taskId) }}
                       disabled={retryMutation.isPending}
                     >
                       Retry
@@ -118,21 +117,20 @@ export default function AgentActivityPage() {
                 </div>
               </div>
 
-              {/* Expanded detail */}
-              {expandedTask === task.task_id && (
+              {expandedTask === task.taskId && (
                 <div className="px-10 pb-4 space-y-3 border-t border-border">
                   <div className="grid grid-cols-2 gap-4 pt-3">
                     <div className="space-y-1">
                       <span className="text-xs text-text-muted uppercase tracking-wide">Task ID</span>
-                      <div className="font-mono text-xs text-text-secondary">{task.task_id}</div>
+                      <div className="font-mono text-xs text-text-secondary">{task.taskId}</div>
                     </div>
                     <div className="space-y-1">
                       <span className="text-xs text-text-muted uppercase tracking-wide">Repository</span>
-                      <div className="font-mono text-xs text-text-secondary">{task.repository_id}</div>
+                      <div className="font-mono text-xs text-text-secondary">{task.repositoryId}</div>
                     </div>
                   </div>
 
-                  {copiedId === task.task_id && (
+                  {copiedId === task.taskId && (
                     <span className="text-xs text-success">Task ID copied</span>
                   )}
                 </div>
