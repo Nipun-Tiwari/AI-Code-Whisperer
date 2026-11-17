@@ -71,9 +71,11 @@ class IndexingPipeline:
             try:
                 await self._execute(db)
             except QuotaExhaustedError as exc:
+                await db.rollback()
                 await self._update_job(db, IndexJobStatus.paused, error_category="quota_exhausted")
                 logger.warning("Job paused — quota exhausted", job_id=self._job_id, error=str(exc))
             except Exception as exc:
+                await db.rollback()
                 await self._update_job(db, IndexJobStatus.failed, error_category="pipeline_error")
                 logger.error("Job failed", job_id=self._job_id, error=str(exc), exc_info=True)
 

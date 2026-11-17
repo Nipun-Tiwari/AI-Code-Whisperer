@@ -28,7 +28,13 @@ class SymbolRecord(Base):
         index=True,
     )
     symbol_kind: Mapped[SymbolKind] = mapped_column(
-        Enum(SymbolKind, name="symbol_kind"),
+        Enum(
+            SymbolKind,
+            name="symbol_kind",
+            # Persist enum values ("import", "class") — not member names
+            # ("import_", "cls") — so they match the Postgres enum labels.
+            values_callable=lambda enum_cls: [member.value for member in enum_cls],
+        ),
         nullable=False,
     )
     name: Mapped[str] = mapped_column(String(512), nullable=False)
