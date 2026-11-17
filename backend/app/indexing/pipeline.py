@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -52,8 +53,11 @@ _LANG_ADAPTERS = {
 _CLASSIFIER = FileClassifier()
 _CHUNKER = CodeChunker()
 
-# Keep embed batches small: free-tier embed RPM counts each text in the batch.
-_EMBED_BATCH = 20
+# Keep embed batches small for free-tier TPM (~30k tokens/min).
+_EMBED_BATCH = 5
+_EMBED_TEXT_CHARS = 2000
+# Target ~25k TPM with headroom under the 30k free-tier limit.
+_EMBED_TARGET_TPM = 25_000
 
 
 class IndexingPipeline:
@@ -93,6 +97,16 @@ class IndexingPipeline:
         repo = repo_result.scalar_one_or_none()
         if not repo:
             await self._update_job(db, IndexJobStatus.failed, error_category="repo_not_found")
+            return
+
+        checkpoint = self._parse_checkpoint(job)
+        embed_offset = int(checkpoint.get("embed_offset") or 0)
+        if (
+            checkpoint.get("stage") == "embedding"
+            and embed_offset > 0
+            and job.version_id is not None
+        ):
+            await self._resume_embedding(db, job, repo, embed_offset)
             return
 
         # Mark as started
@@ -206,14 +220,6 @@ class IndexingPipeline:
         content_by_file: dict[str, bytes] = {}
         failed = 0
 
-        # Load checkpoint if resuming
-        checkpoint = {}
-        if job.checkpoint:
-            try:
-                checkpoint = json.loads(job.checkpoint)
-            except Exception:
-                checkpoint = {}
-
         done_paths = set(checkpoint.get("done_paths", []))
 
         for entry, fc in classified:
@@ -310,26 +316,7 @@ class IndexingPipeline:
         # burn free-tier generate_content RPM (often 5/min), and can hang the job.
 
         # ── Stage 5: Embed and persist to Qdrant ─────────────────────────────
-        # Check quota before expensive embedding stage
-        from app.usage.quota_manager import get_quota_manager
-        qm = get_quota_manager()
-        if not await qm.check_service_available("gemini_embeddings"):
-            await self._update_job(db, IndexJobStatus.paused, error_category="quota_exhausted")
-            logger.warning("Embedding stage paused — gemini_embeddings quota exhausted", job_id=self._job_id)
-            return
-
-        job.status = IndexJobStatus.embedding
-        job.stage = "embedding"
-        await db.commit()
-
-        await self._vector_store.ensure_collection()
-
-        # Build a file_id lookup
-        file_id_by_path = {fr.path: fr.id for fr in file_records}
-
-        chunk_buffer: list[tuple[CodeChunk, str, str]] = []  # (chunk_obj, text, path)
-        processed = 0
-
+        chunk_buffer: list[tuple[CodeChunk, str, str, str]] = []  # chunk, text, path, language
         for fr in file_records:
             path = fr.path
             content = content_by_file.get(path)
@@ -351,26 +338,167 @@ class IndexingPipeline:
                     symbol_name=chunk_data.symbol_name,
                 )
                 db.add(cc)
-                chunk_buffer.append((cc, chunk_data.text, path))
+                chunk_buffer.append((cc, chunk_data.text, path, fc_lang))
 
         await db.flush()  # get chunk IDs
 
-        # Embed in batches
-        for i in range(0, len(chunk_buffer), _EMBED_BATCH):
+        processed = await self._embed_chunk_buffer(
+            db,
+            job=job,
+            repo=repo,
+            version=version,
+            chunk_buffer=chunk_buffer,
+            embed_offset=0,
+        )
+
+        # Rebuild BM25 index
+        invalidate_index(str(repo.id))
+        # Lazy load will rebuild on next search
+
+        # ── Stage 6: Finalize ─────────────────────────────────────────────────
+        await self._finalize_job(db, job, repo, version, branch, processed, failed)
+
+    @staticmethod
+    def _parse_checkpoint(job: IndexJob) -> dict:
+        if not job.checkpoint:
+            return {}
+        try:
+            data = json.loads(job.checkpoint)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _estimate_embed_tokens(texts: list[str]) -> int:
+        return sum(max(1, len(text[:_EMBED_TEXT_CHARS]) // 4) for text in texts)
+
+    async def _resume_embedding(
+        self,
+        db: AsyncSession,
+        job: IndexJob,
+        repo: Repository,
+        embed_offset: int,
+    ) -> None:
+        """Resume embedding from checkpoint without re-inserting chunks."""
+        version_result = await db.execute(
+            select(RepositoryVersion).where(RepositoryVersion.id == job.version_id)
+        )
+        version = version_result.scalar_one_or_none()
+        if not version:
+            await self._update_job(db, IndexJobStatus.failed, error_category="version_not_found")
+            return
+
+        job.status = IndexJobStatus.embedding
+        job.stage = "embedding"
+        job.started_at = job.started_at or datetime.now(timezone.utc)
+        job.error_category = None
+        await db.commit()
+
+        chunk_result = await db.execute(
+            select(CodeChunk)
+            .where(CodeChunk.version_id == version.id)
+            .order_by(CodeChunk.created_at.asc(), CodeChunk.id.asc())
+        )
+        existing_chunks = list(chunk_result.scalars().all())
+        if not existing_chunks:
+            await self._update_job(db, IndexJobStatus.failed, error_category="no_chunks_to_resume")
+            return
+
+        file_ids = {cc.file_id for cc in existing_chunks}
+        file_result = await db.execute(select(FileRecord).where(FileRecord.id.in_(file_ids)))
+        files_by_id = {fr.id: fr for fr in file_result.scalars().all()}
+
+        chunk_buffer: list[tuple[CodeChunk, str, str, str]] = []
+        for cc in existing_chunks:
+            fr = files_by_id.get(cc.file_id)
+            path = fr.path if fr else ""
+            language = (fr.language if fr else None) or "text"
+            text = cc.content or ""
+            chunk_buffer.append((cc, text, path, language))
+
+        start = min(embed_offset, len(chunk_buffer))
+        logger.info(
+            "Resuming embedding from checkpoint",
+            job_id=self._job_id,
+            embed_offset=start,
+            chunks=len(chunk_buffer),
+        )
+        processed = await self._embed_chunk_buffer(
+            db,
+            job=job,
+            repo=repo,
+            version=version,
+            chunk_buffer=chunk_buffer,
+            embed_offset=start,
+        )
+        invalidate_index(str(repo.id))
+        await self._finalize_job(
+            db,
+            job,
+            repo,
+            version,
+            repo.selected_branch,
+            processed,
+            job.files_failed or 0,
+        )
+
+    async def _embed_chunk_buffer(
+        self,
+        db: AsyncSession,
+        *,
+        job: IndexJob,
+        repo: Repository,
+        version: RepositoryVersion,
+        chunk_buffer: list[tuple[CodeChunk, str, str, str]],
+        embed_offset: int,
+    ) -> int:
+        from app.usage.quota_manager import get_quota_manager
+
+        qm = get_quota_manager()
+        if not await qm.check_service_available("gemini_embeddings"):
+            job.checkpoint = json.dumps(
+                {
+                    "stage": "embedding",
+                    "embed_offset": embed_offset,
+                    "chunks_done": embed_offset,
+                }
+            )
+            await db.commit()
+            raise QuotaExhaustedError(
+                "Embedding quota exhausted. Indexing paused.",
+                service="embedding_provider",
+            )
+
+        job.status = IndexJobStatus.embedding
+        job.stage = "embedding"
+        job.files_total = len(chunk_buffer)
+        job.files_processed = embed_offset
+        await db.commit()
+
+        await self._vector_store.ensure_collection()
+
+        processed = embed_offset
+        for i in range(embed_offset, len(chunk_buffer), _EMBED_BATCH):
             batch = chunk_buffer[i : i + _EMBED_BATCH]
-            texts = [text for _, text, _ in batch]
+            texts = [text for _, text, _, _ in batch]
+            estimated_tokens = self._estimate_embed_tokens(texts)
+            batch_started = time.monotonic()
 
             try:
                 vectors = await self._embedder.embed_texts(texts)
             except QuotaExhaustedError:
-                # Save checkpoint and re-raise to pause job
-                done_paths_list = list(done_paths) + [fr.path for fr in file_records[:processed]]
-                job.checkpoint = json.dumps({"stage": "embedding", "done_paths": done_paths_list, "embed_offset": i})
+                job.checkpoint = json.dumps(
+                    {
+                        "stage": "embedding",
+                        "embed_offset": i,
+                        "chunks_done": i,
+                    }
+                )
                 await db.commit()
                 raise
 
             vector_points: list[VectorPoint] = []
-            for (cc, text, path), vector in zip(batch, vectors):
+            for (cc, text, path, language), vector in zip(batch, vectors):
                 point_id = str(cc.id)
                 cc.qdrant_point_id = point_id
                 cc.embedding_model = self._embedder._model
@@ -390,29 +518,54 @@ class IndexingPipeline:
                         version_id=str(version.id),
                         file_id=str(cc.file_id),
                         file_path=path,
-                        language=fr.language or "text",
+                        language=language or "text",
                         chunk_type=cc.chunk_type or "unknown",
                         symbol_name=cc.symbol_name,
                         line_start=cc.line_start or 0,
                         line_end=cc.line_end or 0,
-                        text=text[:2000],
+                        text=text[:_EMBED_TEXT_CHARS],
                     )
                 )
 
             await self._vector_store.upsert_chunks(vector_points)
             await db.commit()
-            processed += len(batch)
+            processed = i + len(batch)
 
-            # Update progress
             job.files_processed = processed
-            job.checkpoint = json.dumps({"stage": "embedding", "chunks_done": processed})
+            job.checkpoint = json.dumps(
+                {
+                    "stage": "embedding",
+                    "embed_offset": processed,
+                    "chunks_done": processed,
+                }
+            )
             await db.commit()
 
-        # Rebuild BM25 index
-        invalidate_index(str(repo.id))
-        # Lazy load will rebuild on next search
+            # Pace under free-tier TPM so 429s stay rare.
+            batch_elapsed = time.monotonic() - batch_started
+            pace_sleep = max(0.0, estimated_tokens / _EMBED_TARGET_TPM * 60.0 - batch_elapsed)
+            if pace_sleep > 0:
+                logger.info(
+                    "Pacing embeddings for free-tier TPM",
+                    sleep_seconds=round(pace_sleep, 2),
+                    estimated_tokens=estimated_tokens,
+                    chunks_done=processed,
+                    chunks_total=len(chunk_buffer),
+                )
+                await asyncio.sleep(pace_sleep)
 
-        # ── Stage 6: Finalize ─────────────────────────────────────────────────
+        return processed
+
+    async def _finalize_job(
+        self,
+        db: AsyncSession,
+        job: IndexJob,
+        repo: Repository,
+        version: RepositoryVersion,
+        branch: str,
+        processed: int,
+        failed: int,
+    ) -> None:
         job.status = IndexJobStatus.persisting
         job.stage = "persisting"
         await db.commit()
@@ -421,9 +574,10 @@ class IndexingPipeline:
         final_status = IndexJobStatus.partial if failed > 0 else IndexJobStatus.completed
         job.status = final_status
         job.stage = None
+        job.error_category = None
+        job.checkpoint = None
         job.completed_at = datetime.now(timezone.utc)
         job.files_processed = processed
-        # A completed or partial job means the repository now has a usable index.
         repo.status = RepositoryStatus.indexed
         await db.commit()
 

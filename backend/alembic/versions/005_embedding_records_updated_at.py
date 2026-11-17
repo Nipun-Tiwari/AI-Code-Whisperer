@@ -16,17 +16,15 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # EmbeddingRecord inherits Base.updated_at, but migration 002 omitted the column.
-    op.add_column(
-        "embedding_records",
-        sa.Column(
-            "updated_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
+    # Safe if the column was already added manually (e.g. Neon ALTER).
+    op.execute(
+        """
+        ALTER TABLE embedding_records
+        ADD COLUMN IF NOT EXISTS updated_at
+            TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT now()
+        """
     )
 
 
 def downgrade() -> None:
-    op.drop_column("embedding_records", "updated_at")
+    op.execute("ALTER TABLE embedding_records DROP COLUMN IF EXISTS updated_at")
