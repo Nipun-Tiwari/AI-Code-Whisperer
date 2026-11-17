@@ -29,6 +29,10 @@ class CodeChunk(Base):
     object_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     line_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     line_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Chunking strategy that produced this chunk: symbol | sliding | full_file
+    chunk_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Enclosing symbol name (function/class) when chunk_type == "symbol"
+    symbol_name: Mapped[str | None] = mapped_column(String(512), nullable=True)
     # Qdrant point ID for vector lookup
     qdrant_point_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # Embedding model/version that produced the vector

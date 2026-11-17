@@ -51,8 +51,8 @@ class Settings(BaseSettings):
 
     # ── Google Gemini ─────────────────────────────────────────────────────────
     gemini_api_key: str = ""
-    gemini_model_fast: str = "gemini-2.5-flash"
-    gemini_model_strong: str = "gemini-2.5-pro"
+    gemini_model_fast: str = "gemini-3.8-flash"
+    gemini_model_strong: str = "gemini-3.8-flash"
     gemini_embedding_model: str = "models/text-embedding-004"
 
     # ── Cloudflare R2 ─────────────────────────────────────────────────────────
