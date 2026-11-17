@@ -63,13 +63,24 @@ class EmbeddingClient:
             except Exception as exc:
                 err_str = str(exc).lower()
                 if "quota" in err_str or "429" in err_str or "resource_exhausted" in err_str:
-                    # Daily / hard exhaustion signals — pause the job.
-                    if "per day" in err_str or "perday" in err_str or "daily" in err_str:
+                    # Only per-minute / explicit retry-after signals are transient.
+                    # Daily, monthly, billing, or generic "quota exceeded" must hard-stop
+                    # so we do not burn remaining free-tier allowance on useless retries.
+                    is_transient_rate_limit = (
+                        "per minute" in err_str
+                        or "perminute" in err_str
+                        or "requests per minute" in err_str
+                        or "retry in" in err_str
+                        or "retrydelay" in err_str
+                        or "retry_delay" in err_str
+                        or "rate limit" in err_str
+                        or "ratelimit" in err_str
+                    )
+                    if not is_transient_rate_limit:
                         raise QuotaExhaustedError(
                             "Embedding quota exhausted. Indexing paused.",
                             service="embedding_provider",
                         ) from exc
-                    # Per-minute rate limit — back off and retry.
                     wait = max(_MIN_BACKOFF_SECONDS, 2 ** attempt * 2)
                     logger.warning(
                         "Embedding rate limit, backing off",
