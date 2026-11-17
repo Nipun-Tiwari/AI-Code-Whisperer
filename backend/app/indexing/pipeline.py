@@ -52,7 +52,8 @@ _LANG_ADAPTERS = {
 _CLASSIFIER = FileClassifier()
 _CHUNKER = CodeChunker()
 
-_EMBED_BATCH = 50  # embed this many chunks at a time
+# Keep embed batches small: free-tier embed RPM counts each text in the batch.
+_EMBED_BATCH = 20
 
 
 class IndexingPipeline:
@@ -298,28 +299,15 @@ class IndexingPipeline:
                 file_tree=all_paths,
                 top_symbols=all_symbol_names,
             )
-            # Store summary in a simple text record (use description field for now)
+            # Only persist a real summary — never store Gemini error text.
             if repo_summary:
                 repo.description = repo_summary[:2000]
                 await db.commit()
         except Exception as exc:
             logger.warning("Repo summary failed", error=str(exc))
 
-        # Module summaries for top 20 largest files
-        sorted_files = sorted(file_records, key=lambda fr: fr.size_bytes, reverse=True)[:20]
-        for fr in sorted_files:
-            if fr.language in ("python", "javascript", "typescript"):
-                try:
-                    content = content_by_file.get(fr.path, b"")
-                    excerpt = content.decode("utf-8", errors="replace")[:3000]
-                    sym_names = [s.name for s in symbols_by_file.get(fr.path, [])]
-                    await self._summarizer.generate_module_summary(
-                        file_path=fr.path,
-                        symbols=sym_names,
-                        code_excerpt=excerpt,
-                    )
-                except Exception as exc:
-                    logger.warning("Module summary failed", path=fr.path, error=str(exc))
+        # Skip per-file module summaries during indexing. They are not persisted,
+        # burn free-tier generate_content RPM (often 5/min), and can hang the job.
 
         # ── Stage 5: Embed and persist to Qdrant ─────────────────────────────
         # Check quota before expensive embedding stage

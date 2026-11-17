@@ -53,7 +53,8 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model_fast: str = "gemini-3.8-flash"
     gemini_model_strong: str = "gemini-3.8-flash"
-    gemini_embedding_model: str = "models/text-embedding-004"
+    # Free-tier Gemini API: text-embedding-004 was shut down; use gemini-embedding-2.
+    gemini_embedding_model: str = "gemini-embedding-2"
 
     # ── Cloudflare R2 ─────────────────────────────────────────────────────────
     r2_account_id: str = ""

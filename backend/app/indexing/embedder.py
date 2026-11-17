@@ -10,13 +10,16 @@ from app.exceptions import QuotaExhaustedError
 
 logger = structlog.get_logger(__name__)
 
-_BATCH_SIZE = 100
-_MAX_RETRIES = 3
+# Free-tier embed RPM counts each text in a batch. Keep batches small so one
+# call does not burn the entire 100 RPM window.
+_BATCH_SIZE = 20
+_MAX_RETRIES = 5
 _VECTOR_DIM = 768
+_MIN_BACKOFF_SECONDS = 4
 
 
 class EmbeddingClient:
-    """Generate text embeddings using Google Gemini text-embedding-004."""
+    """Generate text embeddings using Google Gemini gemini-embedding-2."""
 
     def __init__(self) -> None:
         settings = get_settings()
@@ -49,21 +52,25 @@ class EmbeddingClient:
                 response = await self._client.aio.models.embed_content(
                     model=self._model,
                     contents=texts,
-                    config=gtypes.EmbedContentConfig(task_type=task_type),
+                    config=gtypes.EmbedContentConfig(
+                        task_type=task_type,
+                        # Match existing Qdrant collection dimensionality.
+                        output_dimensionality=_VECTOR_DIM,
+                    ),
                 )
                 return [list(e.values) for e in response.embeddings]
 
             except Exception as exc:
                 err_str = str(exc).lower()
                 if "quota" in err_str or "429" in err_str or "resource_exhausted" in err_str:
-                    if "quota" in err_str and "per" not in err_str:
-                        # Hard quota exhaustion — do not retry
+                    # Daily / hard exhaustion signals — pause the job.
+                    if "per day" in err_str or "perday" in err_str or "daily" in err_str:
                         raise QuotaExhaustedError(
                             "Embedding quota exhausted. Indexing paused.",
                             service="embedding_provider",
                         ) from exc
-                    # Rate limit — back off
-                    wait = 2 ** attempt * 2
+                    # Per-minute rate limit — back off and retry.
+                    wait = max(_MIN_BACKOFF_SECONDS, 2 ** attempt * 2)
                     logger.warning(
                         "Embedding rate limit, backing off",
                         attempt=attempt + 1,

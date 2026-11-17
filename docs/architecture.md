@@ -43,7 +43,7 @@ All agents are read-only. No source code, test files, or PRs are created or modi
 3. Files classified: binary/vendor/generated excluded by rules
 4. Supported languages parsed with tree-sitter → symbol/AST extraction
 5. Code-aware chunks created with file + line metadata
-6. Embeddings generated via Gemini `text-embedding-004`
+6. Embeddings generated via Gemini `gemini-embedding-2`
 7. Vectors persisted to Qdrant, metadata to PostgreSQL
 8. Module and repository summaries generated and stored
 9. Job status updated: completed / partial / failed

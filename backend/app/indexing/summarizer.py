@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import structlog
 from google import genai
 from google.genai import types as gtypes
@@ -9,6 +10,8 @@ from app.config import get_settings
 logger = structlog.get_logger(__name__)
 
 _MAX_EXCERPT_CHARS = 3000  # ~750 tokens — keep prompts concise
+# Free-tier Flash RPM is very low (often 5/min). Fail fast instead of hanging.
+_SUMMARY_TIMEOUT_SECONDS = 20
 
 
 class Summarizer:
@@ -25,7 +28,11 @@ class Summarizer:
         file_tree: list[str],
         top_symbols: list[str],
     ) -> str:
-        """Generate a 3-paragraph technical summary of the repository."""
+        """Generate a 3-paragraph technical summary of the repository.
+
+        Returns an empty string on failure so callers never persist error text
+        as the repository description.
+        """
         # Build a concise representation of the directory structure
         top_level_dirs: set[str] = set()
         ext_counts: dict[str, int] = {}
@@ -55,18 +62,21 @@ Write exactly 3 short paragraphs (max 300 words total):
 Be specific and factual. Only state what can be observed from the provided information."""
 
         try:
-            response = await self._client.aio.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(
-                    max_output_tokens=512,
-                    temperature=0.2,
+            response = await asyncio.wait_for(
+                self._client.aio.models.generate_content(
+                    model=self._model,
+                    contents=prompt,
+                    config=gtypes.GenerateContentConfig(
+                        max_output_tokens=512,
+                        temperature=0.2,
+                    ),
                 ),
+                timeout=_SUMMARY_TIMEOUT_SECONDS,
             )
             return response.text or ""
         except Exception as exc:
             logger.warning("Repository summary generation failed", error=str(exc))
-            return f"Summary generation failed: {exc}"
+            return ""
 
     async def generate_module_summary(
         self,
@@ -74,7 +84,11 @@ Be specific and factual. Only state what can be observed from the provided infor
         symbols: list[str],
         code_excerpt: str,
     ) -> str:
-        """Generate a 2-paragraph summary of a module/file."""
+        """Generate a 2-paragraph summary of a module/file.
+
+        Prefer not calling this during free-tier indexing — module summaries are
+        not persisted by the pipeline and burn scarce generate_content quota.
+        """
         truncated = code_excerpt[:_MAX_EXCERPT_CHARS]
 
         prompt = f"""Summarize this code module in exactly 2 short paragraphs (max 150 words total).
@@ -93,13 +107,16 @@ Paragraph 2: Key functions/classes and how they relate to each other.
 Be concise and factual. Do not invent functionality not visible in the code."""
 
         try:
-            response = await self._client.aio.models.generate_content(
-                model=self._model,
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(
-                    max_output_tokens=256,
-                    temperature=0.2,
+            response = await asyncio.wait_for(
+                self._client.aio.models.generate_content(
+                    model=self._model,
+                    contents=prompt,
+                    config=gtypes.GenerateContentConfig(
+                        max_output_tokens=256,
+                        temperature=0.2,
+                    ),
                 ),
+                timeout=_SUMMARY_TIMEOUT_SECONDS,
             )
             return response.text or ""
         except Exception as exc:
