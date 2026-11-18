@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { FileText, Loader2, Copy, RefreshCw } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import { PageHeader, StatusBadge, EmptyState } from '@/components'
+import { FileText, Loader2, Copy, RefreshCw, Download } from 'lucide-react'
+import html2pdf from 'html2pdf.js'
+import { PageHeader, StatusBadge, EmptyState, MarkdownView } from '@/components'
 import { AppApiError } from '@/api/client'
 import { useRepositories } from '@/hooks'
 import { generateDocumentation } from '@/api/documentation'
@@ -28,6 +28,17 @@ const DOC_TYPES: { value: DocType; label: string; description: string }[] = [
   { value: 'technical', label: 'Technical Reference', description: 'API and function-level documentation' },
 ]
 
+function sanitizePdfFilename(title: string | undefined): string {
+  const base = (title || 'documentation')
+    .trim()
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 80)
+  return `${base || 'documentation'}.pdf`
+}
+
 export default function DocumentationPage() {
   const { data: repos } = useRepositories()
   const [selectedRepo, setSelectedRepo] = useState('')
@@ -35,6 +46,8 @@ export default function DocumentationPage() {
   const [modulePath, setModulePath] = useState('')
   const [result, setResult] = useState<TaskResponse | null>(null)
   const [copied, setCopied] = useState(false)
+  const [pdfExporting, setPdfExporting] = useState(false)
+  const pdfExportRef = useRef<HTMLDivElement>(null)
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -64,6 +77,37 @@ export default function DocumentationPage() {
       navigator.clipboard.writeText(content)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  const handleDownloadPdf = async () => {
+    const el = pdfExportRef.current
+    if (!el || !content || pdfExporting) return
+
+    setPdfExporting(true)
+    const previousBg = el.style.backgroundColor
+    const previousColor = el.style.color
+    // Prefer light background for readable screenshots in dark theme.
+    el.style.backgroundColor = '#ffffff'
+    el.style.color = '#111827'
+
+    try {
+      await html2pdf()
+        .set({
+          margin: [10, 10, 10, 10],
+          filename: sanitizePdfFilename(docResult?.title),
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .from(el)
+        .save()
+    } catch (err) {
+      console.error('PDF export failed', err)
+    } finally {
+      el.style.backgroundColor = previousBg
+      el.style.color = previousColor
+      setPdfExporting(false)
     }
   }
 
@@ -163,11 +207,20 @@ export default function DocumentationPage() {
             <div className="flex items-center gap-2">
               <span className="text-xs text-text-muted">v: {docResult.repositoryVersion?.slice(0, 8) || 'unknown'}</span>
               <button
-                className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-sm text-text-secondary rounded-md hover:border-accent/50 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-sm text-text-secondary rounded-md hover:border-accent/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={handleCopy}
+                disabled={!content}
               >
                 <Copy size={12} />
                 {copied ? 'Copied!' : 'Copy'}
+              </button>
+              <button
+                className="flex items-center gap-1.5 px-3 py-1.5 border border-border text-sm text-text-secondary rounded-md hover:border-accent/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                onClick={handleDownloadPdf}
+                disabled={!content || mutation.isPending || pdfExporting}
+              >
+                {pdfExporting ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                {pdfExporting ? 'Preparing PDF...' : 'Download PDF'}
               </button>
             </div>
           </div>
@@ -181,10 +234,13 @@ export default function DocumentationPage() {
           )}
 
           <div className="grid grid-cols-3 gap-4">
-            {/* Main content */}
+            {/* Main content — PDF export target (title + body; not sources/gaps) */}
             <div className="col-span-2 border border-border rounded-lg p-5 bg-surface">
-              <div className="prose prose-sm max-w-none text-text-primary [&>h1]:text-base [&>h1]:font-semibold [&>h2]:text-sm [&>h2]:font-semibold [&>h3]:text-sm [&>h3]:font-medium [&>p]:text-sm [&>p]:text-text-secondary [&>ul]:text-sm [&>ul]:text-text-secondary [&>code]:text-xs [&>pre]:text-xs [&>pre]:bg-surface-elevated [&>pre]:p-3 [&>pre]:rounded">
-                <ReactMarkdown>{content || 'No documentation content was generated.'}</ReactMarkdown>
+              <div ref={pdfExportRef} id="documentation-pdf-export" className="bg-surface p-1 rounded space-y-3">
+                <h1 className="text-base font-semibold text-text-primary">
+                  {docResult.title || 'Documentation'}
+                </h1>
+                <MarkdownView>{content || 'No documentation content was generated.'}</MarkdownView>
               </div>
             </div>
 
