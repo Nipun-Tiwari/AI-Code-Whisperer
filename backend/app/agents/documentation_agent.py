@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import json
+import re
 from datetime import datetime, timezone
 
 import structlog
@@ -21,6 +21,13 @@ _DOC_TYPE_PROMPTS = {
 }
 
 _MAX_CONTEXT_CHARS = 10000
+_MAX_OUTPUT_TOKENS = 8192
+_H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
+_GAPS_SECTION_RE = re.compile(
+    r"(?im)^##\s+gaps?\s*\n(.*?)(?=\n##\s|\Z)",
+    re.DOTALL,
+)
+_BULLET_RE = re.compile(r"^\s*[-*+]\s+(.+)$", re.MULTILINE)
 
 
 def _detect_doc_type(user_request: str) -> str:
@@ -30,6 +37,52 @@ def _detect_doc_type(user_request: str) -> str:
     if any(w in lower for w in ["module", "file", "class", "explain this", "what does this"]):
         return "module"
     return "technical"
+
+
+def _finish_reason_is_max_tokens(response: object) -> bool:
+    """Best-effort check for Gemini finish_reason indicating truncation."""
+    try:
+        candidates = getattr(response, "candidates", None) or []
+        if not candidates:
+            return False
+        reason = getattr(candidates[0], "finish_reason", None)
+        if reason is None:
+            return False
+        text = str(reason).upper()
+        return "MAX_TOKEN" in text or text.endswith("MAX_TOKENS") or text == "2"
+    except Exception:
+        return False
+
+
+def _parse_markdown_documentation(
+    markdown: str,
+    doc_type: str,
+    *,
+    truncated: bool = False,
+) -> tuple[str, str, list[str]]:
+    """Extract title, full Markdown content, and gaps bullets from model output."""
+    text = (markdown or "").strip()
+    if not text:
+        return (
+            f"Repository Documentation ({doc_type})",
+            "",
+            ["Model returned empty documentation"],
+        )
+
+    title = f"Repository Documentation ({doc_type})"
+    h1 = _H1_RE.search(text)
+    if h1:
+        title = h1.group(1).strip() or title
+
+    gaps: list[str] = []
+    gaps_match = _GAPS_SECTION_RE.search(text)
+    if gaps_match:
+        gaps = [m.group(1).strip() for m in _BULLET_RE.finditer(gaps_match.group(1)) if m.group(1).strip()]
+
+    if truncated:
+        gaps = [*gaps, "Output truncated by model token limit"]
+
+    return title, text, gaps
 
 
 async def documentation_agent_node(state: WorkflowState, db: AsyncSession | None = None) -> WorkflowState:
@@ -133,12 +186,13 @@ Instructions:
 - Structure the document logically for the target audience (software developers)
 - Be concise but complete
 
-Respond with valid JSON:
-{{
-  "title": "<documentation title>",
-  "content": "<full Markdown content>",
-  "gaps": ["<what information was missing or uncertain>"]
-}}"""
+Output format (Markdown only — do NOT wrap the document in JSON):
+1. First line must be an H1 title: `# <documentation title>`
+2. Then the full Markdown documentation body
+3. Optionally end with a section:
+## Gaps
+- <what information was missing or uncertain>
+"""
 
     try:
         client = genai.Client(api_key=settings.gemini_api_key)
@@ -146,26 +200,48 @@ Respond with valid JSON:
             model=settings.gemini_model_strong,
             contents=prompt,
             config=gtypes.GenerateContentConfig(
-                response_mime_type="application/json",
-                max_output_tokens=2048,
+                max_output_tokens=_MAX_OUTPUT_TOKENS,
                 temperature=0.3,
             ),
         )
-        parsed = json.loads(response.text or "{}")
+        raw_text = (response.text or "").strip()
+        truncated = _finish_reason_is_max_tokens(response)
 
         usage = response.usage_metadata
-        tokens = (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
-        state["tokens_used"] = state.get("tokens_used", 0) + tokens
+        if usage is not None:
+            tokens = (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
+            state["tokens_used"] = state.get("tokens_used", 0) + tokens
 
-        result = {
-            "doc_type": doc_type,
-            "title": parsed.get("title", f"Repository Documentation ({doc_type})"),
-            "content": parsed.get("content", ""),
-            "citations": citations,
-            "repository_version": state.get("commit_sha", "unknown"),
-            "gaps": parsed.get("gaps", []),
-            "generated_at": datetime.now(timezone.utc).isoformat(),
-        }
+        if not raw_text:
+            state.setdefault("errors", []).append("documentation_agent llm: empty response")
+            result = {
+                "doc_type": doc_type,
+                "title": "Documentation Generation Failed",
+                "content": "LLM returned empty documentation.",
+                "citations": citations,
+                "repository_version": state.get("commit_sha", "unknown"),
+                "gaps": ["LLM generation returned empty output"],
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        else:
+            title, content, gaps = _parse_markdown_documentation(
+                raw_text,
+                doc_type,
+                truncated=truncated,
+            )
+            if truncated:
+                state.setdefault("warnings", []).append(
+                    "documentation_agent: output truncated by model token limit"
+                )
+            result = {
+                "doc_type": doc_type,
+                "title": title,
+                "content": content,
+                "citations": citations,
+                "repository_version": state.get("commit_sha", "unknown"),
+                "gaps": gaps,
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
 
     except Exception as exc:
         logger.error("Documentation agent LLM call failed", error=str(exc))
