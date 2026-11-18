@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import json
+
 import structlog
-from google import genai
-from google.genai import types as gtypes
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.agents.state import WorkflowState
+from app.config import get_settings
+from app.llm import complete
 from app.retrieval.service import EvidenceItem, RetrievalService
 
 logger = structlog.get_logger(__name__)
@@ -31,10 +32,9 @@ _MAX_CONTEXT_CHARS = 8000
 
 
 async def repository_agent_node(state: WorkflowState, db: AsyncSession | None = None) -> WorkflowState:
-    """Answer repository Q&A using hybrid retrieval + Gemini."""
+    """Answer repository Q&A using hybrid retrieval + configured LLM."""
     settings = get_settings()
 
-    # Check token budget
     if state.get("tokens_used", 0) >= state.get("token_budget", 4000):
         state.setdefault("warnings", []).append("repository_agent: token budget reached before execution")
         return {**state, "agent_outputs": {**state.get("agent_outputs", {}), "repository_agent": {"skipped": True}}}
@@ -49,7 +49,6 @@ async def repository_agent_node(state: WorkflowState, db: AsyncSession | None = 
                 repository_id=state["repository_id"],
                 top_k=10,
             )
-            # Store evidence in state
             state["retrieved_evidence"] = [
                 {
                     "chunk_id": e.chunk_id,
@@ -80,7 +79,6 @@ async def repository_agent_node(state: WorkflowState, db: AsyncSession | None = 
             "agent_outputs": {**state.get("agent_outputs", {}), "repository_agent": result},
         }
 
-    # Build context respecting token budget
     context_parts: list[str] = []
     total_chars = 0
     for item in evidence_items:
@@ -100,25 +98,17 @@ Retrieved code evidence:
 
     result: dict = {}
 
-    if settings.gemini_configured:
+    if settings.llm_configured:
         try:
-            client = genai.Client(api_key=settings.gemini_api_key)
-            import json
-            response = await client.aio.models.generate_content(
-                model=settings.gemini_model_strong,
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    max_output_tokens=1024,
-                    temperature=0.2,
-                ),
+            completion = await complete(
+                prompt,
+                tier="strong",
+                max_tokens=1024,
+                temperature=0.2,
+                json_mode=True,
             )
-            raw = response.text or "{}"
-            result = json.loads(raw)
-
-            usage = response.usage_metadata
-            tokens = (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
-            state["tokens_used"] = state.get("tokens_used", 0) + tokens
+            result = json.loads(completion.text or "{}")
+            state["tokens_used"] = state.get("tokens_used", 0) + completion.tokens_used
 
         except Exception as exc:
             logger.error("Repository agent LLM call failed", error=str(exc))
@@ -130,7 +120,6 @@ Retrieved code evidence:
                 "limitations": str(exc),
             }
     else:
-        # Return raw evidence without LLM synthesis
         result = {
             "answer": f"Found {len(evidence_items)} relevant code sections. LLM synthesis unavailable.",
             "citations": [
@@ -143,7 +132,7 @@ Retrieved code evidence:
                 for e in evidence_items[:5]
             ],
             "confidence": "low",
-            "limitations": "Gemini not configured — raw retrieval only.",
+            "limitations": "LLM not configured — raw retrieval only.",
         }
 
     return {

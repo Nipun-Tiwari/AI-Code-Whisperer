@@ -49,12 +49,19 @@ class Settings(BaseSettings):
     qdrant_url: str = ""
     qdrant_api_key: str = ""
 
-    # ── Google Gemini ─────────────────────────────────────────────────────────
+    # ── Google Gemini (embeddings; generate fallback) ─────────────────────────
     gemini_api_key: str = ""
     gemini_model_fast: str = "gemini-3.8-flash"
     gemini_model_strong: str = "gemini-3.8-flash"
     # Free-tier Gemini API: text-embedding-004 was shut down; use gemini-embedding-2.
     gemini_embedding_model: str = "gemini-embedding-2"
+
+    # ── Text LLM (Groq preferred for generate; Gemini fallback) ────────────────
+    # Production Groq model IDs: https://console.groq.com/docs/models
+    groq_api_key: str = ""
+    llm_provider: str = "groq"  # groq | gemini
+    llm_model_fast: str = "llama-3.1-8b-instant"
+    llm_model_strong: str = "llama-3.3-70b-versatile"
 
     # ── Cloudflare R2 ─────────────────────────────────────────────────────────
     r2_account_id: str = ""
@@ -87,6 +94,28 @@ class Settings(BaseSettings):
     @property
     def gemini_configured(self) -> bool:
         return bool(self.gemini_api_key)
+
+    @property
+    def groq_configured(self) -> bool:
+        return bool(self.groq_api_key)
+
+    @property
+    def active_llm_provider(self) -> str:
+        """Resolve which provider handles text generation."""
+        preferred = (self.llm_provider or "groq").strip().lower()
+        if preferred == "groq" and self.groq_configured:
+            return "groq"
+        if preferred == "gemini" and self.gemini_configured:
+            return "gemini"
+        if self.groq_configured:
+            return "groq"
+        if self.gemini_configured:
+            return "gemini"
+        return "none"
+
+    @property
+    def llm_configured(self) -> bool:
+        return self.active_llm_provider in ("groq", "gemini")
 
     @property
     def r2_configured(self) -> bool:

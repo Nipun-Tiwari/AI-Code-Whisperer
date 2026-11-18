@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 
 import structlog
-from google import genai
-from google.genai import types as gtypes
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.agents.state import WorkflowState
+from app.config import get_settings
+from app.llm import complete
 from app.retrieval.service import EvidenceItem, RetrievalService
 
 logger = structlog.get_logger(__name__)
@@ -26,23 +25,20 @@ async def investigation_agent_node(state: WorkflowState, db: AsyncSession | None
         state.setdefault("warnings", []).append("investigation_agent: token budget reached")
         return {**state, "agent_outputs": {**state.get("agent_outputs", {}), "investigation_agent": {"skipped": True}}}
 
-    # Step 1: Extract searchable entities
     key_entities: list[str] = state.get("plan", {}).get("key_entities", [])
-    if not key_entities and settings.gemini_configured:
-        key_entities = await _extract_entities(issue_description, settings)
-        state["tokens_used"] = state.get("tokens_used", 0) + 100  # estimate
+    if not key_entities and settings.llm_configured:
+        key_entities = await _extract_entities(issue_description)
+        state["tokens_used"] = state.get("tokens_used", 0) + 100
 
     if not key_entities:
-        # Fall back to using the raw issue text
         key_entities = [issue_description]
 
-    # Step 2: Retrieve evidence for each entity
     all_evidence: list[EvidenceItem] = []
     seen_chunk_ids: set[str] = set()
 
     if db is not None:
         retrieval = RetrievalService(db)
-        queries = [issue_description] + key_entities[:4]  # limit queries
+        queries = [issue_description] + key_entities[:4]
 
         for query in queries:
             try:
@@ -60,7 +56,6 @@ async def investigation_agent_node(state: WorkflowState, db: AsyncSession | None
 
     all_evidence = all_evidence[:_MAX_EVIDENCE_ITEMS]
 
-    # Store evidence
     state["retrieved_evidence"] = [
         {
             "chunk_id": e.chunk_id,
@@ -94,7 +89,6 @@ async def investigation_agent_node(state: WorkflowState, db: AsyncSession | None
         }
         return {**state, "agent_outputs": {**state.get("agent_outputs", {}), "investigation_agent": result}}
 
-    # Step 3 & 4: Trace code path and rank hypotheses
     result = await _run_investigation(issue_description, all_evidence, settings, state)
 
     return {
@@ -103,26 +97,23 @@ async def investigation_agent_node(state: WorkflowState, db: AsyncSession | None
     }
 
 
-async def _extract_entities(issue_description: str, settings) -> list[str]:
-    """Use Gemini Flash to extract searchable entities from the issue description."""
+async def _extract_entities(issue_description: str) -> list[str]:
+    """Use the fast LLM to extract searchable entities from the issue description."""
     try:
-        client = genai.Client(api_key=settings.gemini_api_key)
         prompt = f"""Extract searchable code entities from this issue description.
 Return JSON: {{"entities": ["function_name", "module_name", "error_type", "keyword"]}}
 Limit to 5 most specific, relevant entities.
 
 Issue: {issue_description}"""
 
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model_fast,
-            contents=prompt,
-            config=gtypes.GenerateContentConfig(
-                response_mime_type="application/json",
-                max_output_tokens=200,
-                temperature=0.1,
-            ),
+        completion = await complete(
+            prompt,
+            tier="fast",
+            max_tokens=200,
+            temperature=0.1,
+            json_mode=True,
         )
-        parsed = json.loads(response.text or "{}")
+        parsed = json.loads(completion.text or "{}")
         return parsed.get("entities", [])
     except Exception as exc:
         logger.warning("Entity extraction failed", error=str(exc))
@@ -135,19 +126,18 @@ async def _run_investigation(
     settings,
     state: WorkflowState,
 ) -> dict:
-    """Run the full investigation analysis using Gemini Pro."""
-    if not settings.gemini_configured:
+    """Run the full investigation analysis using the strong LLM."""
+    if not settings.llm_configured:
         return {
             "symptom_summary": issue_description,
             "affected_files": list({e.file_path for e in evidence}),
             "execution_path": [],
             "hypotheses": [],
             "suggested_remediation": "LLM not configured.",
-            "limitations": "Gemini not configured — raw retrieval only.",
+            "limitations": "LLM not configured — raw retrieval only.",
             "follow_up_checks": [],
         }
 
-    # Build context
     context_parts: list[str] = []
     total_chars = 0
     for item in evidence:
@@ -199,23 +189,16 @@ Respond with valid JSON:
 }}"""
 
     try:
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model_strong,
-            contents=prompt,
-            config=gtypes.GenerateContentConfig(
-                response_mime_type="application/json",
-                max_output_tokens=2048,
-                temperature=0.2,
-            ),
+        completion = await complete(
+            prompt,
+            tier="strong",
+            max_tokens=2048,
+            temperature=0.2,
+            json_mode=True,
         )
-        result = json.loads(response.text or "{}")
+        result = json.loads(completion.text or "{}")
+        state["tokens_used"] = state.get("tokens_used", 0) + completion.tokens_used
 
-        usage = response.usage_metadata
-        tokens = (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
-        state["tokens_used"] = state.get("tokens_used", 0) + tokens
-
-        # Ensure required fields
         result.setdefault("symptom_summary", issue_description)
         result.setdefault("affected_files", list({e.file_path for e in evidence}))
         result.setdefault("execution_path", [])

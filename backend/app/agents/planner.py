@@ -3,11 +3,10 @@ from __future__ import annotations
 import json
 
 import structlog
-from google import genai
-from google.genai import types as gtypes
 
-from app.config import get_settings
 from app.agents.state import WorkflowState
+from app.config import get_settings
+from app.llm import complete
 
 logger = structlog.get_logger(__name__)
 
@@ -50,10 +49,18 @@ async def planner_node(state: WorkflowState) -> WorkflowState:
     pinned_raw = state.get("request_type") or ""
     pinned = pinned_raw if pinned_raw in _PINNED_TYPES else None
 
-    # Check LLM quota before proceeding
+    # Check LLM quota before proceeding.
     from app.usage.quota_manager import get_quota_manager
     qm = get_quota_manager()
-    if not await qm.check_service_available("gemini_llm"):
+    quota_keys = ["llm"]
+    if settings.active_llm_provider == "gemini":
+        quota_keys.append("gemini_llm")
+    llm_available = True
+    for key in quota_keys:
+        if not await qm.check_service_available(key):
+            llm_available = False
+            break
+    if not llm_available:
         request_type = pinned or "repository_qa"
         return {
             **state,
@@ -64,11 +71,10 @@ async def planner_node(state: WorkflowState) -> WorkflowState:
                 "key_entities": [],
             },
             "token_budget": _BUDGET_BY_TYPE.get(request_type, 4000),
-            # Keep running so pinned specialist agents (e.g. security) can still execute.
             "task_status": "running" if pinned else "failed",
             "service_constraints": [
                 *(state.get("service_constraints") or []),
-                "gemini_llm:quota_exhausted",
+                "llm:quota_exhausted",
             ],
             "errors": [
                 *(state.get("errors") or []),
@@ -93,23 +99,17 @@ async def planner_node(state: WorkflowState) -> WorkflowState:
     request_type = "repository_qa"
     plan: dict = {}
 
-    if settings.gemini_configured:
+    if settings.llm_configured:
         try:
-            client = genai.Client(api_key=settings.gemini_api_key)
             prompt = f"{_SYSTEM_PROMPT}\n\nUser request: {user_request}"
-
-            response = await client.aio.models.generate_content(
-                model=settings.gemini_model_fast,
-                contents=prompt,
-                config=gtypes.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    max_output_tokens=256,
-                    temperature=0.1,
-                ),
+            result = await complete(
+                prompt,
+                tier="fast",
+                max_tokens=256,
+                temperature=0.1,
+                json_mode=True,
             )
-
-            raw = response.text or ""
-            parsed = json.loads(raw)
+            parsed = json.loads(result.text or "{}")
             detected_type = parsed.get("type", "repository_qa")
             if detected_type in _BUDGET_BY_TYPE:
                 request_type = detected_type
@@ -119,11 +119,7 @@ async def planner_node(state: WorkflowState) -> WorkflowState:
                 "reasoning": parsed.get("reasoning", ""),
                 "key_entities": parsed.get("key_entities", []),
             }
-
-            # Track token usage
-            usage = response.usage_metadata
-            tokens_used = (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
-            state["tokens_used"] = state.get("tokens_used", 0) + tokens_used
+            state["tokens_used"] = state.get("tokens_used", 0) + result.tokens_used
 
         except (json.JSONDecodeError, KeyError) as exc:
             logger.warning("Planner JSON parse failed, defaulting to repository_qa", error=str(exc))
@@ -133,7 +129,6 @@ async def planner_node(state: WorkflowState) -> WorkflowState:
             state.setdefault("errors", []).append(f"planner: {exc}")
             plan = {"type": request_type, "reasoning": "llm_error", "key_entities": []}
     else:
-        # Simple keyword-based fallback when Gemini is not configured
         lower = user_request.lower()
         if any(w in lower for w in ["bug", "error", "crash", "fail", "exception", "investigate", "root cause"]):
             request_type = "investigation"

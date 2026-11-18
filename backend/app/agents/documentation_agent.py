@@ -4,12 +4,11 @@ import re
 from datetime import datetime, timezone
 
 import structlog
-from google import genai
-from google.genai import types as gtypes
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.state import WorkflowState
 from app.config import get_settings
+from app.llm import complete
 from app.retrieval.service import RetrievalService
 
 logger = structlog.get_logger(__name__)
@@ -24,7 +23,7 @@ _MAX_CONTEXT_CHARS = 10000
 _MAX_OUTPUT_TOKENS = 8192
 _H1_RE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 _GAPS_SECTION_RE = re.compile(
-    r"(?im)^##\s+gaps?\s*\n(.*?)(?=\n##\s|\Z)",
+    r"(?im)^##\s*gaps?\s*\n(.*?)(?=\n##\s|\Z)",
     re.DOTALL,
 )
 _BULLET_RE = re.compile(r"^\s*[-*+]\s+(.+)$", re.MULTILINE)
@@ -37,21 +36,6 @@ def _detect_doc_type(user_request: str) -> str:
     if any(w in lower for w in ["module", "file", "class", "explain this", "what does this"]):
         return "module"
     return "technical"
-
-
-def _finish_reason_is_max_tokens(response: object) -> bool:
-    """Best-effort check for Gemini finish_reason indicating truncation."""
-    try:
-        candidates = getattr(response, "candidates", None) or []
-        if not candidates:
-            return False
-        reason = getattr(candidates[0], "finish_reason", None)
-        if reason is None:
-            return False
-        text = str(reason).upper()
-        return "MAX_TOKEN" in text or text.endswith("MAX_TOKENS") or text == "2"
-    except Exception:
-        return False
 
 
 def _parse_markdown_documentation(
@@ -100,7 +84,6 @@ async def documentation_agent_node(state: WorkflowState, db: AsyncSession | None
     if db is not None:
         try:
             retrieval = RetrievalService(db)
-            # For architecture docs, retrieve broadly; for module docs, retrieve specifically
             queries = [user_request]
             if doc_type == "architecture":
                 queries += ["main entry point", "configuration", "database models"]
@@ -136,19 +119,18 @@ async def documentation_agent_node(state: WorkflowState, db: AsyncSession | None
         }
         return {**state, "agent_outputs": {**state.get("agent_outputs", {}), "documentation_agent": result}}
 
-    if not settings.gemini_configured:
+    if not settings.llm_configured:
         result = {
             "doc_type": doc_type,
             "title": f"Repository Documentation ({doc_type})",
             "content": "LLM not configured. Raw evidence available.",
             "citations": [{"file_path": e.file_path, "line_start": e.line_start, "line_end": e.line_end} for e in evidence_items[:5]],
             "repository_version": state.get("commit_sha", "unknown"),
-            "gaps": ["Gemini not configured — documentation generation unavailable"],
+            "gaps": ["LLM not configured — documentation generation unavailable"],
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
         return {**state, "agent_outputs": {**state.get("agent_outputs", {}), "documentation_agent": result}}
 
-    # Build context
     context_parts: list[str] = []
     total_chars = 0
     citations: list[dict] = []
@@ -195,22 +177,15 @@ Output format (Markdown only — do NOT wrap the document in JSON):
 """
 
     try:
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model_strong,
-            contents=prompt,
-            config=gtypes.GenerateContentConfig(
-                max_output_tokens=_MAX_OUTPUT_TOKENS,
-                temperature=0.3,
-            ),
+        completion = await complete(
+            prompt,
+            tier="strong",
+            max_tokens=_MAX_OUTPUT_TOKENS,
+            temperature=0.3,
+            json_mode=False,
         )
-        raw_text = (response.text or "").strip()
-        truncated = _finish_reason_is_max_tokens(response)
-
-        usage = response.usage_metadata
-        if usage is not None:
-            tokens = (usage.prompt_token_count or 0) + (usage.candidates_token_count or 0)
-            state["tokens_used"] = state.get("tokens_used", 0) + tokens
+        raw_text = (completion.text or "").strip()
+        state["tokens_used"] = state.get("tokens_used", 0) + completion.tokens_used
 
         if not raw_text:
             state.setdefault("errors", []).append("documentation_agent llm: empty response")
@@ -224,15 +199,7 @@ Output format (Markdown only — do NOT wrap the document in JSON):
                 "generated_at": datetime.now(timezone.utc).isoformat(),
             }
         else:
-            title, content, gaps = _parse_markdown_documentation(
-                raw_text,
-                doc_type,
-                truncated=truncated,
-            )
-            if truncated:
-                state.setdefault("warnings", []).append(
-                    "documentation_agent: output truncated by model token limit"
-                )
+            title, content, gaps = _parse_markdown_documentation(raw_text, doc_type)
             result = {
                 "doc_type": doc_type,
                 "title": title,

@@ -17,10 +17,10 @@ logger = structlog.get_logger(__name__)
 # ── Service registry ─────────────────────────────────────────────────────────
 
 SERVICE_REGISTRY: dict[str, dict[str, Any]] = {
-    "gemini_llm": {
-        "name": "Google Gemini (LLM)",
+    "llm": {
+        "name": "Text LLM (Groq / Gemini)",
         "category": "ai",
-        "dependent_features": ["All agent workflows", "Repository summaries", "Investigations", "Documentation"],
+        "dependent_features": ["All agent workflows", "Repository summaries", "Investigations", "Documentation", "Chat"],
         "metric_keys": ["tokens_used", "requests"],
     },
     "gemini_embeddings": {
@@ -105,13 +105,24 @@ class DashboardSummary(BaseModel):
 
 # ── Provider adapters ─────────────────────────────────────────────────────────
 
-async def _fetch_gemini_llm(db: AsyncSession) -> tuple[str, list[MetricValue], str | None]:
-    """Fetch Gemini LLM usage from internal UsageEvent records."""
+def _llm_display_name(provider: str) -> str:
+    if provider == "groq":
+        return "Groq (Text LLM)"
+    if provider == "gemini":
+        return "Google Gemini (Text LLM)"
+    return "Text LLM (not configured)"
+
+
+async def _fetch_llm(db: AsyncSession) -> tuple[str, list[MetricValue], str | None]:
+    """Fetch text-generation usage; status follows active LLM provider (Groq preferred)."""
+    settings = get_settings()
+    provider = settings.active_llm_provider
     try:
         since = datetime.now(timezone.utc) - timedelta(days=30)
+        # Track both legacy gemini generate events and groq/llm events.
         result = await db.execute(
             select(func.sum(UsageEvent.quantity), func.count(UsageEvent.id))
-            .where(UsageEvent.service_key == "gemini")
+            .where(UsageEvent.service_key.in_(("llm", "groq", "gemini")))
             .where(UsageEvent.metric == "tokens")
             .where(UsageEvent.recorded_at >= since)
         )
@@ -123,10 +134,11 @@ async def _fetch_gemini_llm(db: AsyncSession) -> tuple[str, list[MetricValue], s
             MetricValue(key="tokens_used", label="Tokens used (30d)", value=total_tokens, unit="tokens", source_type="codewhisperer_tracked"),
             MetricValue(key="requests", label="Requests (30d)", value=total_requests, unit="requests", source_type="codewhisperer_tracked"),
         ]
-        status = "operational" if get_settings().gemini_configured else "not_configured"
-        return status, metrics, None
+        if provider in ("groq", "gemini"):
+            return "operational", metrics, None
+        return "not_configured", metrics, None
     except Exception as exc:
-        logger.warning("Failed to fetch Gemini LLM usage", error=str(exc))
+        logger.warning("Failed to fetch LLM usage", error=str(exc))
         metrics = [
             MetricValue(key="tokens_used", label="Tokens used (30d)", value=None, unit="tokens", source_type="unavailable"),
             MetricValue(key="requests", label="Requests (30d)", value=None, unit="requests", source_type="unavailable"),
@@ -293,7 +305,9 @@ def _build_upstash_redis_status() -> tuple[str, list[MetricValue], str | None]:
 class UsageService:
 
     async def get_service_status(self, db: AsyncSession, service_key: str) -> ServiceStatus:
-        registry_entry = SERVICE_REGISTRY.get(service_key)
+        # Accept legacy gemini_llm key as alias for llm.
+        resolved_key = "llm" if service_key in ("llm", "gemini_llm") else service_key
+        registry_entry = SERVICE_REGISTRY.get(resolved_key)
         if not registry_entry:
             return ServiceStatus(
                 service_key=service_key, name=service_key, category="unknown",
@@ -304,11 +318,16 @@ class UsageService:
 
         settings = get_settings()
         now = datetime.now(timezone.utc)
+        service_key = resolved_key
 
-        if service_key == "gemini_llm":
-            configured = settings.gemini_configured
-            status, metrics, err = await _fetch_gemini_llm(db)
+        if resolved_key == "llm":
+            configured = settings.llm_configured
+            status, metrics, err = await _fetch_llm(db)
             source_type = "codewhisperer_tracked"
+            registry_entry = {
+                **registry_entry,
+                "name": _llm_display_name(settings.active_llm_provider),
+            }
         elif service_key == "gemini_embeddings":
             configured = settings.gemini_configured
             status, metrics, err = await _fetch_gemini_embeddings(db)
@@ -371,11 +390,16 @@ class UsageService:
 
     async def get_usage_history(self, db: AsyncSession, service_key: str, days: int = 7) -> list[UsagePoint]:
         since = datetime.now(timezone.utc) - timedelta(days=days)
-        # Map service_key to the internal service_key used in UsageEvent
-        internal_key = "gemini" if service_key.startswith("gemini") else service_key
+        # Map dashboard keys to UsageEvent.service_key values.
+        if service_key in ("llm", "gemini_llm"):
+            event_keys = ("llm", "groq", "gemini")
+        elif service_key == "gemini_embeddings":
+            event_keys = ("gemini",)
+        else:
+            event_keys = (service_key,)
         result = await db.execute(
             select(UsageEvent)
-            .where(UsageEvent.service_key == internal_key)
+            .where(UsageEvent.service_key.in_(event_keys))
             .where(UsageEvent.recorded_at >= since)
             .order_by(UsageEvent.recorded_at.desc())
             .limit(200)

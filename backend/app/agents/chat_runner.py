@@ -4,13 +4,11 @@ import uuid
 from datetime import datetime, timezone
 
 import structlog
-from google import genai
-from google.genai import types as gtypes
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.session import get_session_factory
+from app.llm import complete
 from app.models import AgentTask, Repository
 from app.models.agent_task import TaskStatus
 from app.models.repository import RepositoryStatus
@@ -170,16 +168,12 @@ Here is relevant code retrieved from the repository:
 Answer the question based ONLY on the retrieved code above. If the code doesn't contain enough information to answer fully, say so clearly. Always reference specific file names and line numbers when relevant. Do not invent functionality not shown in the code."""
 
     try:
-        settings = get_settings()
-        client = genai.Client(api_key=settings.gemini_api_key)
-        response = await client.aio.models.generate_content(
-            model=settings.gemini_model_fast,
-            contents=prompt,
-            config=gtypes.GenerateContentConfig(
-                max_output_tokens=1024,
-                temperature=0.2,
-            ),
+        result = await complete(
+            prompt,
+            tier="fast",
+            max_tokens=1024,
+            temperature=0.2,
         )
-        return response.text or "Unable to generate an answer."
+        return result.text or "Unable to generate an answer."
     except Exception as exc:
         return f"Answer generation failed: {exc}"
